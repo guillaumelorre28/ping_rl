@@ -136,6 +136,38 @@ design, limitations, and calibration protocol.
 
 ---
 
+## Cloud experiments (vast.ai + ClearML)
+
+Run experiments on rented GPUs and keep the results after the machine is gone:
+
+```bash
+cp .env.example .env                  # CLEARML_API_ACCESS_KEY / SECRET_KEY
+make docker-push IMAGE=you/ping-rl:latest
+
+./scripts/vast.sh search                                # offers by total cost
+VAST_DPH=0.35 ./scripts/vast.sh launch <offer_id> --seed 1
+./scripts/vast.sh destroy <instance_id>                 # billing runs until you do
+```
+
+Checkpoints and evaluation videos are pushed to ClearML **during** the run, so
+an interrupted or auto-destroyed instance still leaves recoverable weights.
+Curves reach ClearML through its TensorBoard instrumentation, so keep
+`logger: tensorboard` in the config.
+
+To run a whole ablation campaign on one instance, describe it in a YAML queue —
+each job can override any config key, and the queue is validated locally before
+anything is rented:
+
+```bash
+python scripts/run_jobs.py jobs/example.yaml --dry-run
+VAST_DPH=0.35 ./scripts/vast.sh queue <offer_id> jobs/example.yaml --auto-destroy
+```
+
+See [`docs/vast_clearml.md`](docs/vast_clearml.md) for the full workflow, what
+gets uploaded when, and the offer-selection filters.
+
+---
+
 ## Project Structure
 
 ```
@@ -144,12 +176,16 @@ Diff-Muscle/
 ├── planner.py                # Physics-based ball trajectory planner
 ├── muscle_utils.py           # Muscle activation utilities (PD + FLV inverse dynamics)
 ├── on_policy_runner.py       # PPO on-policy training runner
+├── ball_physics.py           # Spin-aware flight, table and racket contact
+├── clearml_tracking.py       # ClearML experiment tracking
 ├── train_multigpu.py  # Training entry point
 ├── default_config.yaml# PPO hyperparameters and logging config
 ├── tabletennis.xml           # MuJoCo scene definition
 ├── assets/                   # 3D mesh assets (paddle, ball, table)
 ├── myo_sim/                  # MyoSim musculoskeletal models (Apache-2.0)
 ├── src/mjlab/                # mjlab framework source
+├── scripts/                  # vast.ai driver and job-queue runner
+├── jobs/                     # Experiment queues (see jobs/example.yaml)
 └── tests/                    # Unit tests
 ```
 

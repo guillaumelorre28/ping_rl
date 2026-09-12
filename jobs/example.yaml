@@ -1,0 +1,87 @@
+# File de runs pour scripts/run_jobs.py.
+#
+#   python scripts/run_jobs.py jobs/example.yaml --dry-run   # valider
+#   python scripts/run_jobs.py jobs/example.yaml             # exécuter
+#   ./scripts/vast.sh queue <offer_id> jobs/example.yaml     # sur vast.ai
+#
+# Chaque job accepte :
+#   name       nom lisible — sert aussi de nom de task ClearML
+#   args       arguments de train_multigpu.py : seed, action_type,
+#              learning_rate, gpu_ids, log_dir
+#   overrides  surcharges pointées de default_config.yaml (n'importe quelle
+#              clé existante : max_iterations, spin.target, algorithm.gamma…).
+#              Une clé absente de la config de base est REFUSÉE à la
+#              validation — une ablation qui ne s'applique pas produirait un
+#              résultat qu'on croirait informatif.
+#   skip       true pour garder un job dans le fichier sans l'exécuter
+#   base_config  autre config de départ que default_config.yaml
+#
+# Les commentaires comptent dans le payload envoyé à vast.ai (limite de
+# 16 384 caractères, le fichier est compressé avant encodage) : un fichier très
+# commenté peut devoir être scindé.
+
+jobs:
+  # --- Les ablations que le travail sur l'effet a laissées non exécutées ---
+  # Chacune isole UNE brique. Même seed partout : les courbes sont comparables.
+
+  - name: spin-complet
+    args: {seed: 1}
+    overrides:
+      max_iterations: 3000
+
+  - name: ablation-sans-magnus
+    args: {seed: 1}
+    overrides:
+      max_iterations: 3000
+      spin.magnus_enabled: false
+
+  - name: ablation-sans-spin-entrant
+    args: {seed: 1}
+    overrides:
+      max_iterations: 3000
+      spin.incoming_spin_enabled: false
+
+  - name: ablation-sans-planificateur
+    args: {seed: 1}
+    overrides:
+      max_iterations: 3000
+      spin.planner_enabled: false
+
+  # Contact natif : rappel que ce n'est PAS une comparaison à armes égales —
+  # le contact MuJoCo transfère ~94x moins d'effet que la carte analytique
+  # (docs/spin_physics.md). À lire comme une condition « sans transfert
+  # d'effet », pas comme un contact alternatif.
+  - name: ablation-contact-natif
+    args: {seed: 1}
+    overrides:
+      max_iterations: 3000
+      spin.analytic_contact_override: false
+
+  # Référence d'avant l'effet : restaure les interfaces d'observation et de
+  # récompense historiques.
+  - name: baseline-sans-effet
+    args: {seed: 1}
+    overrides:
+      max_iterations: 3000
+      spin.enabled: false
+
+  # --- Exemples d'autres usages ---
+
+  # Effet fixe plutôt que politique conditionnée : utile pour vérifier qu'un
+  # seul geste s'apprend avant de demander toute la plage.
+  - name: lifte-fixe-300
+    skip: true
+    args: {seed: 1}
+    overrides:
+      spin.command_mode: fixed
+      spin.target: [300.0, 0.0, 0.0]
+      spin.reward_axis_weights: [1.0, 0.0, 0.0]
+
+  # Balayage de seeds : trois runs identiques, pour séparer l'effet réel du
+  # bruit d'initialisation.
+  - name: seed-2
+    skip: true
+    args: {seed: 2}
+  - name: seed-3
+    skip: true
+    args: {seed: 3}

@@ -1,0 +1,42 @@
+# Sans ce fichier, `docker build` envoie tout le répertoire au démon : le
+# .venv pèse à lui seul près d'un Go et le .git une quarantaine de Mo, pour
+# rien — l'image reconstruit ses dépendances depuis uv.lock.
+.venv/
+venv/
+env/
+.git/
+.gitignore
+
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Sorties d'entraînement : volumineuses, jamais utiles dans une image.
+logs/
+runs/
+wandb/
+outputs/
+outputs_vast/
+checkpoints/
+*.pt
+*.pth
+*.onnx
+*.mp4
+
+# Illustrations du README et rapports : plusieurs Mo de pur poids mort.
+images/
+docs/
+
+# Secrets : un .env copié dans une image publiée fuiterait les clés ClearML.
+.env
+.env.local
+
+.DS_Store
+.vscode/
+.idea/
+typings/
+notebooks/
+*.ipynb

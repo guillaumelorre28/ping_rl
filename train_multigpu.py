@@ -1,9 +1,16 @@
 import logging
 import os
+import time
 from datetime import datetime
 from typing import Literal
 
 import yaml
+from clearml_tracking import (
+    CheckpointUploader,
+    close_tracking,
+    init_tracking,
+    report_run_cost,
+)
 from tabletennis_env import TableTennisWarpEnv, tabletennis_p2_cfg
 
 from mjlab.utils.gpu import select_gpus
@@ -149,6 +156,20 @@ def run_train(config: dict, log_dir: str) -> None:
     eval_env = TableTennisWarpEnv(eval_env_cfg, device=device)
     eval_env.reset()
     
+    # AVANT le runner : Task.init instrumente TensorBoard, et le SummaryWriter
+    # du runner n'est capté que s'il est ouvert après.
+    started_at = time.time()
+    task = init_tracking(config, log_dir, rank=rank)
+    uploader = None
+    if task is not None and (config.get("tracking") or {}).get("upload_checkpoints", True):
+        uploader = CheckpointUploader(
+            task,
+            log_dir,
+            interval_s=float((config.get("tracking") or {}).get("upload_interval_s", 60)),
+            upload_videos=bool((config.get("tracking") or {}).get("upload_videos", True)),
+        )
+        uploader.start()
+
     runner = OnPolicyRunner(
         env=env,
         eval_env=eval_env,
@@ -158,10 +179,16 @@ def run_train(config: dict, log_dir: str) -> None:
     )
     if config["resume_path"]:
         runner.load(config["resume_path"], load_optimizer=False)
-        
-    print(f"[DEBUG] Rank {rank} about to call learn()", flush=True)
-    runner.learn(num_learning_iterations=config["max_iterations"])
-    print(f"[DEBUG] Rank {rank} learn() completed", flush=True)
+
+    try:
+        print(f"[DEBUG] Rank {rank} about to call learn()", flush=True)
+        runner.learn(num_learning_iterations=config["max_iterations"])
+        print(f"[DEBUG] Rank {rank} learn() completed", flush=True)
+    finally:
+        # finally : une instance en auto-destruction ne laisse pas de seconde
+        # chance, et un run interrompu doit tout de même déposer ses poids.
+        report_run_cost(task, started_at=started_at)
+        close_tracking(task, uploader)
 
 def launch_training(config: dict, gpu_ids: list[int] | Literal["all"] | None = None, log_dir: str = "logs/single_table_tennis/"):
     """

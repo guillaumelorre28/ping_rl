@@ -44,3 +44,15 @@ build:
 .PHONY: docker-build
 docker-build:
 	docker build -t mjlab:latest .
+
+# Image d'entraînement pour vast.ai. --platform linux/amd64 est obligatoire
+# depuis un Mac : une image arm64 ne démarre pas sur l'hôte loué.
+IMAGE ?= glo28/ping-rl:latest
+
+.PHONY: docker-gpu
+docker-gpu:
+	docker build --platform linux/amd64 -t $(IMAGE) .
+
+.PHONY: docker-push
+docker-push: docker-gpu
+	docker push $(IMAGE)

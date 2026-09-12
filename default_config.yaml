@@ -44,9 +44,24 @@ save_interval: 300  # check for potential saves every `save_interval` iterations
 experiment_name: competitive_tennis
 run_name: ""
 # -- logging writer
+# ClearML instrumente TensorBoard : garder `tensorboard` ici fait remonter les
+# courbes du runner dans ClearML sans autre réglage. `wandb` court-circuiterait
+# cette capture.
 logger: tensorboard  # tensorboard, neptune, wandb
 neptune_project: competitive_tennis
 wandb_project: competitive_tennis
+# -- suivi d'expérience ClearML (voir docs/vast_clearml.md)
+# Sans CLEARML_API_* dans l'environnement, le run continue sans suivi.
+tracking:
+  enabled: true
+  project: ping_rl
+  task_name: ""        # vide -> nom du dossier de run (date, seed, lr)
+  tags: []
+  offline: false       # true : écrit localement, réimportable plus tard
+  upload_checkpoints: true
+  upload_videos: true
+  upload_interval_s: 60
+
 # -- load and resuming
 resume_path: ""
 
