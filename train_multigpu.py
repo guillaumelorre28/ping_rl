@@ -1,16 +1,108 @@
-import os
 import logging
-import yaml
+import os
 from datetime import datetime
 from typing import Literal
-from mjlab.utils.random import seed_rng
-from mjlab.utils.gpu import select_gpus
+
+import yaml
 from tabletennis_env import TableTennisWarpEnv, tabletennis_p2_cfg
-from on_policy_runner import OnPolicyRunner
+
+from mjlab.utils.gpu import select_gpus
+from mjlab.utils.random import seed_rng
+
+
+def apply_environment_config(env_cfg, config: dict):
+    """Apply user-facing environment overrides from the training YAML."""
+
+    env_cfg.action_type = config.get("action_type", env_cfg.action_type)
+    env_cfg.enable_multiccd = config.get("enable_multiccd", env_cfg.enable_multiccd)
+    env_cfg.enable_domain_randomization = config.get(
+        "enable_domain_randomization", env_cfg.enable_domain_randomization
+    )
+    spin_cfg = config.get("spin", {})
+    if spin_cfg:
+        env_cfg.spin_physics_enabled = spin_cfg.get("enabled", env_cfg.spin_physics_enabled)
+        env_cfg.analytic_contact_override = spin_cfg.get(
+            "analytic_contact_override", env_cfg.analytic_contact_override
+        )
+        env_cfg.reciprocal_contact_impulse = spin_cfg.get(
+            "reciprocal_contact_impulse", env_cfg.reciprocal_contact_impulse
+        )
+        env_cfg.aerodynamic_model = spin_cfg.get(
+            "aerodynamic_model", env_cfg.aerodynamic_model
+        )
+        env_cfg.drag_enabled = spin_cfg.get("drag_enabled", env_cfg.drag_enabled)
+        env_cfg.magnus_enabled = spin_cfg.get("magnus_enabled", env_cfg.magnus_enabled)
+        env_cfg.incoming_spin_enabled = spin_cfg.get(
+            "incoming_spin_enabled", env_cfg.incoming_spin_enabled
+        )
+        env_cfg.spin_planner_enabled = spin_cfg.get(
+            "planner_enabled", env_cfg.spin_planner_enabled
+        )
+        env_cfg.spin_reward_enabled = spin_cfg.get(
+            "reward_enabled", env_cfg.spin_reward_enabled
+        )
+        env_cfg.spin_command_mode = spin_cfg.get("command_mode", env_cfg.spin_command_mode)
+        env_cfg.spin_target = tuple(spin_cfg.get("target", env_cfg.spin_target))
+        if "target_range" in spin_cfg:
+            env_cfg.spin_target_range.low = tuple(spin_cfg["target_range"]["low"])
+            env_cfg.spin_target_range.high = tuple(spin_cfg["target_range"]["high"])
+        if "incoming_range" in spin_cfg:
+            env_cfg.incoming_spin_range.low = tuple(spin_cfg["incoming_range"]["low"])
+            env_cfg.incoming_spin_range.high = tuple(spin_cfg["incoming_range"]["high"])
+        if "reward_sigma" in spin_cfg:
+            env_cfg.spin_reward_sigma = tuple(spin_cfg["reward_sigma"])
+        if "reward_axis_weights" in spin_cfg:
+            env_cfg.spin_reward_axis_weights = tuple(spin_cfg["reward_axis_weights"])
+        curriculum_cfg = spin_cfg.get("curriculum", {})
+        if curriculum_cfg:
+            env_cfg.spin_curriculum_enabled = curriculum_cfg.get(
+                "enabled", env_cfg.spin_curriculum_enabled
+            )
+            env_cfg.spin_curriculum_initial_scale = curriculum_cfg.get(
+                "initial_scale", env_cfg.spin_curriculum_initial_scale
+            )
+            env_cfg.spin_curriculum_full_fraction = curriculum_cfg.get(
+                "full_fraction", env_cfg.spin_curriculum_full_fraction
+            )
+        shaping_cfg = spin_cfg.get("shaping", {})
+        if shaping_cfg:
+            env_cfg.shaping_final_scale = shaping_cfg.get(
+                "final_scale", env_cfg.shaping_final_scale
+            )
+            env_cfg.shaping_full_fraction = shaping_cfg.get(
+                "full_fraction", env_cfg.shaping_full_fraction
+            )
+        planner_cfg = spin_cfg.get("planner", {})
+        if planner_cfg:
+            env_cfg.planner_wrist_fraction = planner_cfg.get(
+                "wrist_fraction", env_cfg.planner_wrist_fraction
+            )
+            env_cfg.planner_max_paddle_speed = planner_cfg.get(
+                "max_paddle_speed", env_cfg.planner_max_paddle_speed
+            )
+            env_cfg.planner_max_paddle_angular_speed = planner_cfg.get(
+                "max_paddle_angular_speed", env_cfg.planner_max_paddle_angular_speed
+            )
+            env_cfg.spin_planner_root_iterations = planner_cfg.get(
+                "event_root_iterations", env_cfg.spin_planner_root_iterations
+            )
+            env_cfg.spin_planner_integration_substeps = planner_cfg.get(
+                "event_integration_substeps",
+                env_cfg.spin_planner_integration_substeps,
+            )
+        env_cfg.weighted_reward_keys["spin_target"] = spin_cfg.get(
+            "reward_weight", env_cfg.weighted_reward_keys["spin_target"]
+        )
+        env_cfg.weighted_reward_keys["landing_target"] = spin_cfg.get(
+            "landing_reward_weight", env_cfg.weighted_reward_keys["landing_target"]
+        )
+    return env_cfg
 
 
 def run_train(config: dict, log_dir: str) -> None:
     """Training entry point. Video recording is only performed in the rank-0 process."""
+    from on_policy_runner import OnPolicyRunner
+
     cuda_visible = os.environ.get("CUDA_VISIBLE_DEVICES", "")
     if cuda_visible == "":
         device = "cpu"
@@ -41,13 +133,11 @@ def run_train(config: dict, log_dir: str) -> None:
     
     seed_rng(seed)
 
-    env_cfg = tabletennis_p2_cfg()
-    env_cfg.action_type = config["action_type"]
+    env_cfg = apply_environment_config(tabletennis_p2_cfg(), config)
     env = TableTennisWarpEnv(env_cfg, device=device)
     env.reset()
 
-    eval_env_cfg = tabletennis_p2_cfg()
-    eval_env_cfg.action_type = config["action_type"]
+    eval_env_cfg = apply_environment_config(tabletennis_p2_cfg(), config)
     eval_env_cfg.eval_env = True
     eval_env_cfg.num_envs = 1
     eval_env_cfg.nconmax = 200
@@ -117,13 +207,15 @@ def launch_training(config: dict, gpu_ids: list[int] | Literal["all"] | None = N
 
 
 def evaluate(config, path: str):
+    from on_policy_runner import OnPolicyRunner
+
     seed_rng(config["seed"])
 
-    env_cfg = tabletennis_p2_cfg()
+    env_cfg = apply_environment_config(tabletennis_p2_cfg(), config)
     env = TableTennisWarpEnv(env_cfg)
     env.reset()
 
-    eval_env_cfg = tabletennis_p2_cfg()
+    eval_env_cfg = apply_environment_config(tabletennis_p2_cfg(), config)
     eval_env_cfg.eval_env = True
     eval_env_cfg.num_envs = 1
     eval_env_cfg.nconmax = 200

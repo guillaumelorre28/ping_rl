@@ -51,3 +51,43 @@ wandb_project: competitive_tennis
 resume_path: ""
 
 seed: 42
+enable_multiccd: false  # unsupported by the pinned MuJoCo-Warp revision
+enable_domain_randomization: false
+
+# Spin command is expressed in trajectory coordinates, in rad/s:
+# [topspin, sidespin, corkscrew]. Positive topspin bends the shot downwards.
+spin:
+  enabled: true
+  analytic_contact_override: true
+  reciprocal_contact_impulse: true
+  aerodynamic_model: conti2026  # conti2026 or constant
+  drag_enabled: true
+  magnus_enabled: true
+  incoming_spin_enabled: true
+  planner_enabled: true
+  reward_enabled: true
+  command_mode: uniform  # fixed or uniform
+  target: [0.0, 0.0, 0.0]
+  target_range:
+    low: [-400.0, -250.0, 0.0]
+    high: [400.0, 250.0, 0.0]
+  incoming_range:
+    low: [-350.0, -250.0, -100.0]
+    high: [350.0, 250.0, 100.0]
+  reward_weight: 60.0
+  reward_sigma: [80.0, 80.0, 100.0]
+  reward_axis_weights: [1.0, 1.0, 0.0]
+  landing_reward_weight: 40.0
+  curriculum:
+    enabled: true
+    initial_scale: 0.25
+    full_fraction: 0.40
+  shaping:
+    final_scale: 0.20
+    full_fraction: 0.60
+  planner:
+    wrist_fraction: 0.35
+    max_paddle_speed: 12.0
+    max_paddle_angular_speed: 30.0
+    event_root_iterations: 4
+    event_integration_substeps: 3
