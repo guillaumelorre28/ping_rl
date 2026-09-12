@@ -9,7 +9,7 @@
   <compiler angle="radian" meshdir="./" texturedir="./" boundmass="0.001" boundinertia="0.0001" />
 
   <option>
-    <flag multiccd="enable"/>
+    <flag multiccd="disable"/>
   </option>
 
   <size njmax="1000" nconmax="400" nkey="2" nuser_jnt="1"/>
@@ -2179,7 +2179,8 @@
       <site name="paddle" pos="-0.06 0 0" group="4"/>
     </body>
     <body name="pingpong" pos="0 0 1.15">
-      <inertial pos="0 0 0" mass="0.0027" diaginertia="0.0001 0.0001 0.0001"/>
+      <!-- Thin 40 mm spherical shell: I = 2/3 m r^2 = 7.2e-7 kg m^2. -->
+      <inertial pos="0 0 0" mass="0.0027" diaginertia="7.2e-7 7.2e-7 7.2e-7"/>
       <joint name="pingpong_freejoint" type="free" limited="false" actuatorfrclimited="false"/>
       <geom name="pingpong" class="collision" size="0.02" group="1" priority="2" solref="-80000 -1" solimp="0.9 0.95 0.001" shellinertia="true" mass="0" rgba="0.98 0.7 0.015 1"/>
       <site name="pingpong" pos="0 0 0" group="3"/>
@@ -2190,6 +2191,10 @@
   </worldbody>
 
   <contact>
+    <!-- Explicit ball contacts keep table and racket calibration independent. -->
+    <pair geom1="pingpong" geom2="coll_own_half" condim="3" friction="0.25 0.25 0.005 0.0001 0.0001" solref="-80000 -1" solimp="0.9 0.95 0.001"/>
+    <pair geom1="pingpong" geom2="coll_opponent_half" condim="3" friction="0.25 0.25 0.005 0.0001 0.0001" solref="-80000 -1" solimp="0.9 0.95 0.001"/>
+    <pair geom1="pingpong" geom2="pad" condim="3" friction="0.80 0.80 0.005 0.0001 0.0001" solref="-80000 -1" solimp="0.9 0.95 0.001"/>
     <pair geom1="thorax_coll0" geom2="humerus_coll"/>
     <pair geom1="thorax_coll1" geom2="humerus_coll"/>
     <pair geom1="thorax_coll0" geom2="humerus_coll"/>
@@ -4192,7 +4197,9 @@
 
   <sensor>
     <velocimeter site="pingpong" name="pingpong_vel_sensor"/>
+    <frameangvel objtype="body" objname="pingpong" name="pingpong_angvel_sensor"/>
     <velocimeter site="paddle" name="paddle_vel_sensor"/>
+    <frameangvel objtype="body" objname="paddle" name="paddle_angvel_sensor"/>
     <contact name="ball_paddle_contact" geom1="pingpong" geom2="pad"/>
     <contact name="ball_own_contact" geom1="pingpong" geom2="coll_own_half"/>
     <contact name="ball_opponent_contact" geom1="pingpong" geom2="coll_opponent_half"/>
