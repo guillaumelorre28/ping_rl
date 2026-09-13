@@ -121,21 +121,32 @@ def test_accelerometer_sensor(articulated_robot_xml, device):
 
   scene = Scene(scene_cfg, device)
   model = scene.compile()
-  sim_cfg = SimulationCfg(njmax=20)
+  # Écart local par rapport à mjlab amont : njmax relevé et durée de chute
+  # corrigée. njmax=20 débordait (« nefc overflow ») une fois la base posée,
+  # les contacts excédentaires étant silencieusement abandonnés.
+  sim_cfg = SimulationCfg(njmax=128)
   sim = Simulation(num_envs=2, cfg=sim_cfg, model=model, device=device)
   scene.initialize(sim.mj_model, sim.model, sim.data)
 
   sensor = scene["robot/base_accel"]
 
-  # Step to make robot fall.
-  for _ in range(100):
+  # La base part à z=1 pour une demi-hauteur de 0.1 : elle doit tomber de
+  # 0.8 m, soit sqrt(2*0.8/9.81) ≈ 0.40 s. Le test amont ne simulait que
+  # 100 pas — 0.2 s au pas par défaut — et lisait donc l'accéléromètre en
+  # pleine chute libre, où 0 est la valeur JUSTE. On intègre jusqu'à ce que
+  # le robot soit réellement « on floor », ce que le docstring annonce.
+  fall_time = (2 * (1.0 - 0.1) / 9.81) ** 0.5
+  while sim.data.time[0].item() < 2.0 * fall_time:
     sim.step()
 
   data = sensor.data
 
   assert isinstance(data, torch.Tensor)
   assert data.shape == (2, 3)
-  assert torch.any(torch.abs(data) > 0)
+  # Au repos sur le sol, l'accélération propre vaut +g sur z.
+  torch.testing.assert_close(
+    data[:, 2], torch.full((2,), 9.81, device=data.device), rtol=0, atol=1e-2
+  )
 
 
 def test_multiple_sensors(articulated_robot_xml, device):

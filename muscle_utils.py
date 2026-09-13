@@ -1,10 +1,10 @@
 from typing import Callable
-import warp as wp
-import mujoco
+
 import mujoco_warp as mjw
-from mujoco_warp._src.util_misc import muscle_bias, muscle_gain
-from mujoco_warp._src.types import vec10, MJ_MINVAL
 import torch
+import warp as wp
+from mujoco_warp._src.types import vec10
+from mujoco_warp._src.util_misc import muscle_bias, muscle_gain
 
 
 @wp.kernel
@@ -64,6 +64,28 @@ def get_target_actuator_length(
     return fk_data.actuator_length
 
 
+def align_model_field(field: torch.Tensor, num_envs: int) -> torch.Tensor:
+    """Broadcast a model field over the environments.
+
+    MuJoCo Warp gives every model field a leading world dimension: 1 when the
+    value is shared by all environments, ``num_envs`` once the field has been
+    expanded (``Simulation.expand_model_fields``). Reading such a field with
+    the actuator mask alone silently indexes that leading axis instead of the
+    actuator axis, and deriving a batch size from it collapses it to 1 -- which
+    makes the Warp launches below cover a fraction of the muscles and quietly
+    reuse environment 0's coefficients everywhere. Going through this helper
+    keeps the two cases apart and fails loudly on anything else.
+    """
+
+    if field.shape[0] == num_envs:
+        return field
+    if field.shape[0] == 1:
+        return field.expand(num_envs, *field.shape[1:])
+    raise ValueError(
+        f"model field has leading dimension {field.shape[0]}, expected 1 or {num_envs}"
+    )
+
+
 def target_length_to_activations(
     model: mjw.Model,
     data: mjw.Data,
@@ -74,52 +96,74 @@ def target_length_to_activations(
 
     device = target_length.device
     wp_device = wp.get_device(str(device))
-    
+
+    # `actuator_dyntype` carries no world dimension: the mask is a plain
+    # per-actuator vector, applied to the actuator axis of everything below.
     muscle_indices = model.actuator_dyntype == 4  # mujoco.mjtDyn.mjDYN_MUSCLE
 
     length = data.actuator_length[:, muscle_indices]
-    lengthrange = model.actuator_lengthrange[muscle_indices]  # w/o batch dim
     velocity = data.actuator_velocity[:, muscle_indices]
-    peak_force = model.actuator_biasprm[:, muscle_indices, 2]  # w/ batch dim
+    # The data tensors are the only ones genuinely per-environment, so they --
+    # not the model fields -- define the batch size.
+    num_envs = length.shape[0]
+
+    lengthrange = align_model_field(model.actuator_lengthrange, num_envs)[:, muscle_indices]
+    biasprm = align_model_field(model.actuator_biasprm, num_envs)[:, muscle_indices]
+    gainprm = align_model_field(model.actuator_gainprm, num_envs)[:, muscle_indices]
+    acc0 = align_model_field(model.actuator_acc0, num_envs)[:, muscle_indices]
+    peak_force = biasprm[..., 2]
 
     force = (
         (kp_scale * (target_length[:, muscle_indices] - length) - kd_scale * kp_scale * velocity)
         * peak_force
-        / (lengthrange[:, 1] - lengthrange[:, 0])
+        / (lengthrange[..., 1] - lengthrange[..., 0])
     )
     clipped_force = torch.clamp(force, -peak_force, torch.zeros_like(peak_force))
 
-    prmb = model.actuator_biasprm[:, muscle_indices, :10]  # w/ batch dim
-    prmg = model.actuator_gainprm[:, muscle_indices, :10]  # w/ batch dim
-    acc0 = model.actuator_acc0[muscle_indices].unsqueeze(0).repeat(prmb.shape[0], 1)  # add batch dim
-    lengthrange = lengthrange.unsqueeze(0).repeat(prmb.shape[0], 1, 1)  # add batch dim
+    prmb = biasprm[..., :10]
+    prmg = gainprm[..., :10]
+
+    num_muscles = length.shape[1]
+    total = num_envs * num_muscles
+    # `align_model_field` returns expanded views for shared fields; Warp reads
+    # raw buffers, so materialise them before handing them over.
+    flat_lengthrange = lengthrange.reshape(-1, 2).contiguous()
+    flat_acc0 = acc0.reshape(-1).contiguous()
+    flat_length = length.reshape(-1).contiguous()
+    flat_velocity = velocity.reshape(-1).contiguous()
 
     with wp.ScopedDevice(wp_device):
-        bias = wp.zeros(prmb.shape[0] * prmb.shape[1], dtype=float, device=wp_device)
+        bias = wp.zeros(total, dtype=float, device=wp_device)
         wp.launch(
             muscle_bias_kernel,
-            dim=prmb.shape[0] * prmb.shape[1],
-            inputs=[length.reshape(-1), lengthrange.reshape(-1, 2), acc0.reshape(-1), prmb.reshape(-1, 10), bias],
+            dim=total,
+            inputs=[
+                flat_length,
+                flat_lengthrange,
+                flat_acc0,
+                prmb.reshape(-1, 10).contiguous(),
+                bias,
+            ],
             device=bias.device,
         )
 
-        gain = wp.zeros(prmb.shape[0] * prmb.shape[1], dtype=float, device=wp_device)
+        gain = wp.zeros(total, dtype=float, device=wp_device)
         wp.launch(
             muscle_gain_kernel,
-            dim=prmb.shape[0] * prmb.shape[1],
+            dim=total,
             inputs=[
-                length.reshape(-1),
-                velocity.reshape(-1),
-                lengthrange.reshape(-1, 2),
-                acc0.reshape(-1),
-                prmg.reshape(-1, 10),
+                flat_length,
+                flat_velocity,
+                flat_lengthrange,
+                flat_acc0,
+                prmg.reshape(-1, 10).contiguous(),
                 gain,
             ],
             device=gain.device,
         )
 
-        bias = wp.to_torch(bias).reshape(prmb.shape[0], prmb.shape[1])
-        gain = wp.to_torch(gain).reshape(prmb.shape[0], prmb.shape[1])
+        bias = wp.to_torch(bias).reshape(num_envs, num_muscles)
+        gain = wp.to_torch(gain).reshape(num_envs, num_muscles)
         gain = torch.clamp(gain, max=-1)
         activations = torch.clamp((clipped_force - bias) / gain, 0, 1)
     return activations, bias, gain, clipped_force
@@ -161,27 +205,36 @@ def calculate_vae_muscle_act(
     # dyntype == 4 corresponds to mjDYN_MUSCLE
     muscle_indices = model.actuator_dyntype == 4
 
-    # Step 1: extract current muscle state
+    # Step 1: extract current muscle state. Data tensors are the only genuinely
+    # per-environment ones, so they define the batch size; model fields are
+    # broadcast through `align_model_field` (see there for why).
     length = data.actuator_length[:, muscle_indices]          # [batch, num_muscles]
     velocity = data.actuator_velocity[:, muscle_indices]      # [batch, num_muscles]
-    lengthrange = model.actuator_lengthrange[muscle_indices]  # [num_muscles, 2]
-    F0 = model.actuator_biasprm[:, muscle_indices, 2]         # peak isometric force [batch, num_muscles]
+    num_envs = length.shape[0]
+    lengthrange = align_model_field(model.actuator_lengthrange, num_envs)[:, muscle_indices]
+    biasprm = align_model_field(model.actuator_biasprm, num_envs)[:, muscle_indices]
+    gainprm = align_model_field(model.actuator_gainprm, num_envs)[:, muscle_indices]
+    acc0 = align_model_field(model.actuator_acc0, num_envs)[:, muscle_indices]
+    F0 = biasprm[..., 2]                                      # peak isometric force
 
     # Step 2: PD force, normalized to physical units
     length_error = target_length[:, muscle_indices] - length
-    f_pd = (kp * length_error - kd * velocity) * F0 / (lengthrange[:, 1] - lengthrange[:, 0])
+    f_pd = (kp * length_error - kd * velocity) * F0 / (lengthrange[..., 1] - lengthrange[..., 0])
 
     # Step 3: muscles can only pull (negative force), clamp to [-F0, 0]
     f_clipped = torch.clamp(f_pd, min=-F0, max=torch.zeros_like(F0))
 
     # Step 4: inverse dynamics via FLV curve (bias/gain computed by Warp kernels)
-    prmb = model.actuator_biasprm[:, muscle_indices, :10]  # [batch, num_muscles, 10]
-    prmg = model.actuator_gainprm[:, muscle_indices, :10]  # [batch, num_muscles, 10]
-    acc0 = model.actuator_acc0[muscle_indices].unsqueeze(0).repeat(prmb.shape[0], 1)
-    lengthrange_batched = lengthrange.unsqueeze(0).repeat(prmb.shape[0], 1, 1)
+    prmb = biasprm[..., :10]                               # [batch, num_muscles, 10]
+    prmg = gainprm[..., :10]                               # [batch, num_muscles, 10]
 
-    batch_size = prmb.shape[0]
-    num_muscles = prmb.shape[1]
+    batch_size = num_envs
+    num_muscles = length.shape[1]
+    # Expanded views are not contiguous; Warp reads raw buffers.
+    flat_lengthrange = lengthrange.reshape(-1, 2).contiguous()
+    flat_acc0 = acc0.reshape(-1).contiguous()
+    flat_length = length.reshape(-1).contiguous()
+    flat_velocity = velocity.reshape(-1).contiguous()
 
     with wp.ScopedDevice(wp_device):
         bias_flat = wp.zeros(batch_size * num_muscles, dtype=float, device=wp_device)
@@ -189,10 +242,10 @@ def calculate_vae_muscle_act(
             muscle_bias_kernel,
             dim=batch_size * num_muscles,
             inputs=[
-                length.reshape(-1),
-                lengthrange_batched.reshape(-1, 2),
-                acc0.reshape(-1),
-                prmb.reshape(-1, 10),
+                flat_length,
+                flat_lengthrange,
+                flat_acc0,
+                prmb.reshape(-1, 10).contiguous(),
                 bias_flat,
             ],
             device=bias_flat.device,
@@ -203,11 +256,11 @@ def calculate_vae_muscle_act(
             muscle_gain_kernel,
             dim=batch_size * num_muscles,
             inputs=[
-                length.reshape(-1),
-                velocity.reshape(-1),
-                lengthrange_batched.reshape(-1, 2),
-                acc0.reshape(-1),
-                prmg.reshape(-1, 10),
+                flat_length,
+                flat_velocity,
+                flat_lengthrange,
+                flat_acc0,
+                prmg.reshape(-1, 10).contiguous(),
                 gain_flat,
             ],
             device=gain_flat.device,

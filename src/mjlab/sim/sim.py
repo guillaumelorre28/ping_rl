@@ -140,7 +140,13 @@ class Simulation:
     with wp.ScopedDevice(self.wp_device):
       # self._mj_model.opt.enableflags &= ~16 
       self._wp_model = mjwarp.put_model(self._mj_model)
-      self._wp_model.opt.ls_parallel = cfg.ls_parallel
+      # Écart local par rapport à mjlab amont : `ls_parallel` a été retiré de
+      # MuJoCo Warp en 3.9.1, et son accesseur lève désormais AttributeError.
+      # Le garde permet au même code de tourner sur les deux générations ;
+      # `hasattr` renvoie False puisque le getter lève. À supprimer le jour où
+      # mjlab amont prend en charge MuJoCo Warp >= 3.9.1.
+      if hasattr(self._wp_model.opt, "ls_parallel"):
+        self._wp_model.opt.ls_parallel = cfg.ls_parallel
       self._wp_model.opt.contact_sensor_maxmatch = cfg.contact_sensor_maxmatch
 
       self._wp_data = mjwarp.put_data(

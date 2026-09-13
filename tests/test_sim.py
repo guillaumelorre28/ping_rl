@@ -83,7 +83,12 @@ def test_simulation_config_is_piped(robot_xml, device):
 
   # SimulationCfg should be applied to wp_model.
   assert sim.wp_model.opt.contact_sensor_maxmatch == cfg.contact_sensor_maxmatch
-  assert sim.wp_model.opt.ls_parallel == cfg.ls_parallel
+  # Écart local par rapport à mjlab amont : `ls_parallel` a été retiré de
+  # MuJoCo Warp en 3.9.1 et son accesseur lève désormais AttributeError.
+  # La garde reflète celle de `sim.py` ; à retirer des deux côtés le jour où
+  # le dépôt repasse sous une version qui expose l'option.
+  if hasattr(sim.wp_model.opt, "ls_parallel"):
+    assert sim.wp_model.opt.ls_parallel == cfg.ls_parallel
 
 
 def test_sim_reset_restores_initial_state(robot_xml, device):

@@ -1193,11 +1193,16 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "clearml" },
+    { name = "imageio" },
+    { name = "ml-collections" },
     { name = "moviepy" },
     { name = "mujoco" },
     { name = "mujoco-warp" },
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.tuna.tsinghua.edu.cn/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "numpy", version = "2.3.4", source = { registry = "https://pypi.tuna.tsinghua.edu.cn/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "onnxscript" },
     { name = "prettytable" },
+    { name = "pyyaml" },
     { name = "rsl-rl-lib" },
     { name = "tensorboard" },
     { name = "tensordict" },
@@ -1208,7 +1213,8 @@ dependencies = [
     { name = "tyro" },
     { name = "viser" },
     { name = "wandb" },
-    { name = "warp-lang" },
+    { name = "warp-lang", version = "1.17.0", source = { registry = "https://pypi.tuna.tsinghua.edu.cn/simple" }, marker = "sys_platform == 'darwin'" },
+    { name = "warp-lang", version = "1.18.0.dev20260913", source = { registry = "https://pypi.nvidia.com/" }, marker = "sys_platform != 'darwin'" },
 ]
 
 [package.optional-dependencies]
@@ -1229,12 +1235,16 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "clearml", specifier = ">=2.0.2" },
+    { name = "imageio", specifier = ">=2.37" },
+    { name = "ml-collections", specifier = ">=1.0" },
     { name = "moviepy" },
-    { name = "mujoco", specifier = ">=3.4.0", index = "https://py.mujoco.org/" },
-    { name = "mujoco-warp", git = "https://github.com/google-deepmind/mujoco_warp?rev=f2f795796fc433adf8e235f01fae3747585ae5db" },
+    { name = "mujoco", specifier = ">=3.13,<3.14" },
+    { name = "mujoco-warp", specifier = ">=3.13,<3.14" },
+    { name = "numpy", specifier = ">=1.26" },
     { name = "onnxscript", specifier = ">=0.5.4" },
     { name = "prettytable" },
-    { name = "rsl-rl-lib", specifier = "==3.1.0" },
+    { name = "pyyaml", specifier = ">=6.0" },
+    { name = "rsl-rl-lib", specifier = "==2.3.3" },
     { name = "tensorboard", specifier = ">=2.20.0" },
     { name = "tensordict" },
     { name = "torch", specifier = ">=2.7.0" },
@@ -1258,6 +1268,19 @@ dev = [
     { name = "pytest", specifier = ">=8.4.2" },
     { name = "ruff", specifier = ">=0.14.7" },
     { name = "ty", specifier = ">=0.0.1a29" },
+]
+
+[[package]]
+name = "ml-collections"
+version = "1.1.0"
+source = { registry = "https://pypi.tuna.tsinghua.edu.cn/simple" }
+dependencies = [
+    { name = "absl-py" },
+    { name = "pyyaml" },
+]
+sdist = { url = "https://pypi.tuna.tsinghua.edu.cn/packages/b8/f8/1a9ae6696dbb6bc9c44ddf5c5e84710d77fe9a35a57e8a06722e1836a4a6/ml_collections-1.1.0.tar.gz", hash = "sha256:0ac1ac6511b9f1566863e0bb0afad0c64e906ea278ad3f4d2144a55322671f6f", size = 61356, upload-time = "2025-04-17T08:25:02.247Z" }
+wheels = [
+    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/ab/8a/18d4ff2c7bd83f30d6924bd4ad97abf418488c3f908dea228d6f0961ad68/ml_collections-1.1.0-py3-none-any.whl", hash = "sha256:23b6fa4772aac1ae745a96044b925a5746145a70734f087eaca6626e92c05cbc", size = 76707, upload-time = "2025-04-17T08:24:59.038Z" },
 ]
 
 [[package]]
@@ -1360,8 +1383,8 @@ wheels = [
 
 [[package]]
 name = "mujoco"
-version = "3.13.1.dev980264889"
-source = { registry = "https://py.mujoco.org/" }
+version = "3.13.0"
+source = { registry = "https://pypi.tuna.tsinghua.edu.cn/simple" }
 dependencies = [
     { name = "absl-py" },
     { name = "etils", extra = ["epath"] },
@@ -1370,36 +1393,42 @@ dependencies = [
     { name = "numpy", version = "2.3.4", source = { registry = "https://pypi.tuna.tsinghua.edu.cn/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "pyopengl" },
 ]
+sdist = { url = "https://pypi.tuna.tsinghua.edu.cn/packages/54/f6/0c581b100dfc71bc999844685e3d33cfe972f7fed24b62c47b346be7a0fa/mujoco-3.13.0.tar.gz", hash = "sha256:539175d5db25d19ec145170fa264784a626c5ecb227f78d1877e35a0a7955f69", size = 1213045, upload-time = "2026-09-09T15:39:54.985Z" }
 wheels = [
-    { url = "https://py.mujoco.org/mujoco/mujoco-3.13.1.dev980264889-cp310-cp310-macosx_11_0_universal2.whl", hash = "sha256:560ca7e37b35287b6340515feac313e3a5ec48ce4ee9b54b1e0507702846f88e" },
-    { url = "https://py.mujoco.org/mujoco/mujoco-3.13.1.dev980264889-cp310-cp310-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:63c33e8733f2171e797a323cd7f527d78264758e88ff0b06510f8ac40d563be4" },
-    { url = "https://py.mujoco.org/mujoco/mujoco-3.13.1.dev980264889-cp310-cp310-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:f8f65aff8cce6f7f617d73980eb65e004c36f5533abbfabc1ae6fc1047114cc2" },
-    { url = "https://py.mujoco.org/mujoco/mujoco-3.13.1.dev980264889-cp310-cp310-win_amd64.whl", hash = "sha256:63e3709ec19f3db98a80ce420d41e59420bdfcbde64b45ad0881dd008a702b91" },
-    { url = "https://py.mujoco.org/mujoco/mujoco-3.13.1.dev980264889-cp311-cp311-macosx_11_0_universal2.whl", hash = "sha256:1a3f60e32bd090b9c73b1c3c1cec60bce04c4fac8df19c64891f768eafe8d956" },
-    { url = "https://py.mujoco.org/mujoco/mujoco-3.13.1.dev980264889-cp311-cp311-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:6cf58a4d433892f1c1a8d4626a64811001ab9dc4d94f23a551e71e6a09a22841" },
-    { url = "https://py.mujoco.org/mujoco/mujoco-3.13.1.dev980264889-cp311-cp311-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:cdb8d12b2b7553a5c79b1a8f491dbfa02aa3692f0ef30f915240bfaa50a8b3b6" },
-    { url = "https://py.mujoco.org/mujoco/mujoco-3.13.1.dev980264889-cp311-cp311-win_amd64.whl", hash = "sha256:791a44c64707a98ddfb89114bf761b0c3abb55ace450248bc9c774644fa2cb6b" },
-    { url = "https://py.mujoco.org/mujoco/mujoco-3.13.1.dev980264889-cp312-cp312-macosx_11_0_universal2.whl", hash = "sha256:c2e3241597cec3527d5b5ce66ba9af106bbd95a37050f703905b5e0a39776934" },
-    { url = "https://py.mujoco.org/mujoco/mujoco-3.13.1.dev980264889-cp312-cp312-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:c4bd415471f020071ddf5831db9d3a6f91a8414d9d4b8b57e7ca44c091feaf93" },
-    { url = "https://py.mujoco.org/mujoco/mujoco-3.13.1.dev980264889-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:a6a6f7bf1ca10396ddab4759391d876c90a815259c4d19c8fadc9b769cf8267a" },
-    { url = "https://py.mujoco.org/mujoco/mujoco-3.13.1.dev980264889-cp312-cp312-win_amd64.whl", hash = "sha256:afede169974f87b3aa4406942fe8165f74eb27de003e31e4c67364e897035d34" },
-    { url = "https://py.mujoco.org/mujoco/mujoco-3.13.1.dev980264889-cp313-cp313-macosx_11_0_universal2.whl", hash = "sha256:6d958f257a7980bb156419d019a42cfe76b1c20cbfdbaae5fc1632e571dfb992" },
-    { url = "https://py.mujoco.org/mujoco/mujoco-3.13.1.dev980264889-cp313-cp313-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:59799a20259dc4f6f0072baa2851e0e70f3bdf5cf6bd1bdd393936a96548a2c5" },
-    { url = "https://py.mujoco.org/mujoco/mujoco-3.13.1.dev980264889-cp313-cp313-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:587331d618b8f18c4a7098d074fa48dad334dcd5c44514cd46de222e7c63e8af" },
-    { url = "https://py.mujoco.org/mujoco/mujoco-3.13.1.dev980264889-cp313-cp313-win_amd64.whl", hash = "sha256:39963646586f041aa8be73682cd0e6ba8e1a336307f004b03419054fa3cc3ad9" },
+    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/0f/3a/ebf933c537de1843447682880c27c6e718e1e231cae80587426ec1c8ee4d/mujoco-3.13.0-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:944cd831adccec2d7a5f1cb90aee7ac87558e9d32f9102720f69f970f1cf65e9", size = 18761688, upload-time = "2026-09-09T15:38:19.298Z" },
+    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/be/32/280cd56f52c9ff9179d7bcef1d3ac49a85fb72adb4f1e8d6e3a44caaf086/mujoco-3.13.0-cp310-cp310-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:cdd71e58b7b72190198c8ad8a19226f751ad7f35b9703e49178706325bf92d12", size = 19028580, upload-time = "2026-09-09T15:38:22.797Z" },
+    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/57/75/2b5cc322b741e397dc745355fe1f4e94a379f40a843cbecca679697f42db/mujoco-3.13.0-cp310-cp310-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:fee95f0cb2b94a1d72baf0bbebcc33ad44d0540c9bd0f25148e31a473735b2d5", size = 20209673, upload-time = "2026-09-09T15:38:25.959Z" },
+    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/f0/af/023a63c78bf21a0773e2b14523238d409bdd4394468bce7de54b83c95cb2/mujoco-3.13.0-cp310-cp310-win_amd64.whl", hash = "sha256:366e1a2722424de0ab3ca0f358b9de873e8e40e560a633ac8f8fa1b87c5a0141", size = 17070000, upload-time = "2026-09-09T15:38:29.657Z" },
+    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/47/c7/fbc3de6509de3f1cf64444a8a47eb13f8d2fcce16c3ec931917744724759/mujoco-3.13.0-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:9d1f5ea8a9a58c4c4a76456a086431ed0fef2e772a6e743a9ef88aedb7109412", size = 18781490, upload-time = "2026-09-09T15:38:32.673Z" },
+    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/6d/fe/c9d6ec92746a5754e2a4aa1159801a36bdd7490921f91b205c3158e07e63/mujoco-3.13.0-cp311-cp311-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:b2d1f0337b31afccb64b87c7a6e7c23018dc486fc088cbad184fe5d832a72c99", size = 19052739, upload-time = "2026-09-09T15:38:35.384Z" },
+    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/40/a5/aeb2d2e58009aefb8dfd5e1e9b70fc06d21aede38f749b08d62ef3a35c4e/mujoco-3.13.0-cp311-cp311-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:dbae4f4efbf7b0c1449a60f81b64097ac1aaf1b109b1d879075ed7e1f3c3b22c", size = 20233612, upload-time = "2026-09-09T15:38:38.508Z" },
+    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/e8/1a/0e5103460d2590e43ac155cd94b0b5e89f3360297ab984d7031bf60fc993/mujoco-3.13.0-cp311-cp311-win_amd64.whl", hash = "sha256:cea0b3d9af1736bc4ce162eb8a9ef2efa915c5f62f105eeb67d12ee96961bf03", size = 17105710, upload-time = "2026-09-09T15:38:41.527Z" },
+    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/af/6e/b41a3a86a57724ae23827575d8eb30bc9f785f9d543616dfa159eda87dfe/mujoco-3.13.0-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:521329d8fc0d7f3d40cdafeb738b95ffeddec00f280e5482a68c284257be942f", size = 18822490, upload-time = "2026-09-09T15:38:44.325Z" },
+    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/eb/82/6e62cc389e67a3527c0feb1dbc56dcd0c6ee6e2d42396da89f1712bccd32/mujoco-3.13.0-cp312-cp312-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:ce292cdf888dcadf1d1440c3debfdd38519ea01d8e4376f86d1e7754bfe0b069", size = 19103843, upload-time = "2026-09-09T15:38:47.157Z" },
+    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/32/14/585fc852dadf2d73250b45e9d5845624270ca526b723bc2a1c24e1305006/mujoco-3.13.0-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:c4ad24d902887dd9ec1ec5c7149a2d3cf62fb3f6e652a82d113e1ec3d6308ed5", size = 20378803, upload-time = "2026-09-09T15:38:49.848Z" },
+    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/3d/81/f436a5534438936ed62a5d4a74e3fcd41d934858cc27ee0fef822b30621b/mujoco-3.13.0-cp312-cp312-win_amd64.whl", hash = "sha256:85ec06a120bb0cdb19b3815f9e55101fb210e2683b182dc69b169f95ba9a98c4", size = 17231642, upload-time = "2026-09-09T15:38:52.466Z" },
+    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/ce/a5/fcbbd78b50e22ac30ca064c687d08779808099375099f6c35f5917f85eff/mujoco-3.13.0-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:92131b91d35dc7101cfd29b01b05e714fba085f58aa6617fac8c06a29845b4c9", size = 18822606, upload-time = "2026-09-09T15:38:55.48Z" },
+    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/98/b3/8e14f18a4d983697b6cb8b44b436dab9a4bc0dcb445e2ec45147e018a620/mujoco-3.13.0-cp313-cp313-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:862cc7510639824d7740d39a408abc54300febd12432e5e56d52d6c93334cfe7", size = 19104285, upload-time = "2026-09-09T15:38:58.375Z" },
+    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/e6/1d/a04b3d96ecd5ada2cf340ea68a163de610bfe4ec8929c4d3edcb9d9c8bb6/mujoco-3.13.0-cp313-cp313-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:3d0befa6869355a91b7bd452c71a98bc3f93bd94cb96c3f4eaae4172cc6a8975", size = 20379173, upload-time = "2026-09-09T15:39:01.31Z" },
+    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/d2/b2/9e26281c4150fdde0fd9277891dd7655e674a118cdb15c4c137c53742968/mujoco-3.13.0-cp313-cp313-win_amd64.whl", hash = "sha256:101571a624e3cf2c2d4c7e08772d50973dc29863587b18f03b753f399538fe8d", size = 17232226, upload-time = "2026-09-09T15:39:03.845Z" },
 ]
 
 [[package]]
 name = "mujoco-warp"
-version = "0.0.1"
-source = { git = "https://github.com/google-deepmind/mujoco_warp?rev=f2f795796fc433adf8e235f01fae3747585ae5db#f2f795796fc433adf8e235f01fae3747585ae5db" }
+version = "3.13.0"
+source = { registry = "https://pypi.tuna.tsinghua.edu.cn/simple" }
 dependencies = [
     { name = "absl-py" },
     { name = "etils", extra = ["epath"] },
     { name = "mujoco" },
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.tuna.tsinghua.edu.cn/simple" }, marker = "python_full_version < '3.11'" },
     { name = "numpy", version = "2.3.4", source = { registry = "https://pypi.tuna.tsinghua.edu.cn/simple" }, marker = "python_full_version >= '3.11'" },
-    { name = "warp-lang" },
+    { name = "warp-lang", version = "1.17.0", source = { registry = "https://pypi.tuna.tsinghua.edu.cn/simple" }, marker = "sys_platform == 'darwin'" },
+    { name = "warp-lang", version = "1.18.0.dev20260913", source = { registry = "https://pypi.nvidia.com/" }, marker = "sys_platform != 'darwin'" },
+]
+sdist = { url = "https://pypi.tuna.tsinghua.edu.cn/packages/3f/1a/acc6851ba3b6d2e51d4af0ddb5d1924618c8293512a39abe8521a6f56a5d/mujoco_warp-3.13.0.tar.gz", hash = "sha256:5d0a25560fed1b6735138159bac6d138cf123d2007e81e1f86304cf15182506c", size = 2125781, upload-time = "2026-09-09T16:16:17.26Z" }
+wheels = [
+    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/f8/ee/e5227c249c4aed5517f5331612c593965f19aec9f0d994f51c9aee8802fd/mujoco_warp-3.13.0-py3-none-any.whl", hash = "sha256:cb1f74c36684ef5d2b610926d8979db8aa39fd78613a7130cf6a7ef802ee5e3c", size = 2203940, upload-time = "2026-09-09T16:16:15.295Z" },
 ]
 
 [[package]]
@@ -2596,20 +2625,19 @@ wheels = [
 
 [[package]]
 name = "rsl-rl-lib"
-version = "3.1.0"
+version = "2.3.3"
 source = { registry = "https://pypi.tuna.tsinghua.edu.cn/simple" }
 dependencies = [
     { name = "gitpython" },
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.tuna.tsinghua.edu.cn/simple" }, marker = "python_full_version < '3.11'" },
     { name = "numpy", version = "2.3.4", source = { registry = "https://pypi.tuna.tsinghua.edu.cn/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "onnx" },
-    { name = "tensordict" },
     { name = "torch" },
     { name = "torchvision" },
 ]
-sdist = { url = "https://pypi.tuna.tsinghua.edu.cn/packages/bc/7b/8a888898fa3dd79ffc16a80498b592430597fe85152b0a7567c05d576fa1/rsl_rl_lib-3.1.0.tar.gz", hash = "sha256:864d9e548bc27593e4fccbce9ad90678dee11866d980d150038afa8e8bf87f55", size = 35375, upload-time = "2025-09-18T08:21:50.376Z" }
+sdist = { url = "https://pypi.tuna.tsinghua.edu.cn/packages/26/c5/46a9aab0afa60ed53e1e1bbda005f9ed76194e38b00ea7911113ea4af226/rsl_rl_lib-2.3.3.tar.gz", hash = "sha256:a71ae8190a8d28331260d4c7815efc2a175a77fdf09180c47f55a96bab69d8de", size = 48361, upload-time = "2025-05-30T10:52:05.359Z" }
 wheels = [
-    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/1b/37/46f6122fd8efa71d59497cfd3e078a373875535ab0b4f550f7aa47945224/rsl_rl_lib-3.1.0-py3-none-any.whl", hash = "sha256:142ae1c7fc9920d0c209223a4d7ab12ed974944dc0db642161fe01dba64ab4c9", size = 49362, upload-time = "2025-09-18T08:21:48.409Z" },
+    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/51/41/ed5376dfb049af94aebbf8d1c9069cb4d2cf3e4b281e554d1d64001abbb3/rsl_rl_lib-2.3.3-py3-none-any.whl", hash = "sha256:289761caf660e6f9eadc1f5b14224d7715c45e036c4dc00b2abf51d209f0d1a1", size = 40944, upload-time = "2025-05-30T10:52:03.797Z" },
 ]
 
 [[package]]
@@ -3380,17 +3408,48 @@ wheels = [
 
 [[package]]
 name = "warp-lang"
-version = "1.11.0.dev20251211"
-source = { registry = "https://pypi.nvidia.com/" }
+version = "1.17.0"
+source = { registry = "https://pypi.tuna.tsinghua.edu.cn/simple" }
+resolution-markers = [
+    "python_full_version >= '3.13' and platform_machine != 'arm64' and sys_platform == 'darwin'",
+    "python_full_version == '3.12.*' and platform_machine != 'arm64' and sys_platform == 'darwin'",
+    "python_full_version == '3.11.*' and platform_machine != 'arm64' and sys_platform == 'darwin'",
+    "python_full_version < '3.11' and platform_machine != 'arm64' and sys_platform == 'darwin'",
+    "python_full_version >= '3.13' and platform_machine == 'arm64' and sys_platform == 'darwin'",
+    "python_full_version == '3.12.*' and platform_machine == 'arm64' and sys_platform == 'darwin'",
+    "python_full_version == '3.11.*' and platform_machine == 'arm64' and sys_platform == 'darwin'",
+    "python_full_version < '3.11' and platform_machine == 'arm64' and sys_platform == 'darwin'",
+]
 dependencies = [
-    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.tuna.tsinghua.edu.cn/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "numpy", version = "2.3.4", source = { registry = "https://pypi.tuna.tsinghua.edu.cn/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.tuna.tsinghua.edu.cn/simple" }, marker = "python_full_version < '3.11' and sys_platform == 'darwin'" },
+    { name = "numpy", version = "2.3.4", source = { registry = "https://pypi.tuna.tsinghua.edu.cn/simple" }, marker = "python_full_version >= '3.11' and sys_platform == 'darwin'" },
 ]
 wheels = [
-    { url = "https://pypi.nvidia.com/warp-lang/warp_lang-1.11.0.dev20251211-py3-none-macosx_11_0_arm64.whl", hash = "sha256:b5813eb82f32c94e625531ff752d627cdc5b64dc49aca832e4ef2eea3af0721e" },
-    { url = "https://pypi.nvidia.com/warp-lang/warp_lang-1.11.0.dev20251211-py3-none-manylinux_2_28_x86_64.whl", hash = "sha256:15139f7311634f865146c0842ce62ab259e1132007376c70a3d9b4d04c5e0018" },
-    { url = "https://pypi.nvidia.com/warp-lang/warp_lang-1.11.0.dev20251211-py3-none-manylinux_2_34_aarch64.whl", hash = "sha256:c52bb83550b663b3e0c8d067f70af9199cc35d5f62a06da2f748a5dc68e493d8" },
-    { url = "https://pypi.nvidia.com/warp-lang/warp_lang-1.11.0.dev20251211-py3-none-win_amd64.whl", hash = "sha256:5a8c6203863a596ab730e1c57fefc36a00c6687647bcef29d11cb0c78f800930" },
+    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/be/b0/9b1de407fa10b380f5ca4ed1c3e5b129be55ea26a927c7a49e45cdde14b0/warp_lang-1.17.0-py3-none-macosx_11_0_arm64.whl", hash = "sha256:f2fec43afb81caa2190c0b7fa3aaf4d869f3599839f0c40b9ead84331f91e993", size = 27544218, upload-time = "2026-08-31T05:52:29.177Z" },
+]
+
+[[package]]
+name = "warp-lang"
+version = "1.18.0.dev20260913"
+source = { registry = "https://pypi.nvidia.com/" }
+resolution-markers = [
+    "python_full_version >= '3.13' and sys_platform == 'linux'",
+    "python_full_version == '3.12.*' and sys_platform == 'linux'",
+    "python_full_version >= '3.13' and sys_platform != 'darwin' and sys_platform != 'linux'",
+    "python_full_version == '3.12.*' and sys_platform != 'darwin' and sys_platform != 'linux'",
+    "python_full_version == '3.11.*' and sys_platform == 'linux'",
+    "python_full_version < '3.11' and sys_platform == 'linux'",
+    "python_full_version == '3.11.*' and sys_platform != 'darwin' and sys_platform != 'linux'",
+    "python_full_version < '3.11' and sys_platform != 'darwin' and sys_platform != 'linux'",
+]
+dependencies = [
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.tuna.tsinghua.edu.cn/simple" }, marker = "python_full_version < '3.11' and sys_platform != 'darwin'" },
+    { name = "numpy", version = "2.3.4", source = { registry = "https://pypi.tuna.tsinghua.edu.cn/simple" }, marker = "python_full_version >= '3.11' and sys_platform != 'darwin'" },
+]
+wheels = [
+    { url = "https://pypi.nvidia.com/warp-lang/warp_lang-1.18.0.dev20260913-py3-none-manylinux_2_28_x86_64.whl", hash = "sha256:002a390ab2072bb7c1f46311a98334728f49baea249453b6cdf2a3160a7797c0" },
+    { url = "https://pypi.nvidia.com/warp-lang/warp_lang-1.18.0.dev20260913-py3-none-manylinux_2_34_aarch64.whl", hash = "sha256:139cb622a26662b63ab652a50ce525abca361093efa747660e12763e864706e6" },
+    { url = "https://pypi.nvidia.com/warp-lang/warp_lang-1.18.0.dev20260913-py3-none-win_amd64.whl", hash = "sha256:59cb9ce7a61733fe657e528acdb2b2365ed152706af4f432bf981a02e50b2a86" },
 ]
 
 [[package]]

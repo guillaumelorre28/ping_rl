@@ -218,3 +218,78 @@ def test_command_uses_all_gpus_by_default():
     command = build_command({"args": {"gpu_ids": "0 1", "seed": 3}}, "/tmp/c.yaml", index=1)
     assert command[-3:] == ["--gpu-ids", "0", "1"]
     assert "--seed" in command and "3" in command
+
+
+# --------------------------------------------------------------------------
+# packaging
+# --------------------------------------------------------------------------
+
+
+def _declared_distributions() -> set[str]:
+    import re
+
+    import tomllib
+
+    raw = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    names = {
+        re.split(r"[<>=!~\[;]", item)[0].strip().lower().replace("-", "_")
+        for item in raw["project"]["dependencies"]
+    }
+    # Quelques distributions n'exposent pas un module du même nom.
+    alias = {
+        "rsl_rl_lib": "rsl_rl",
+        "warp_lang": "warp",
+        "pyyaml": "yaml",
+        "opencv_python": "cv2",
+        "pillow": "PIL",
+    }
+    return names | {alias[name] for name in names if name in alias}
+
+
+def _third_party_imports() -> dict[str, set[str]]:
+    import ast
+
+    first_party = {path.stem for path in REPO_ROOT.glob("*.py")}
+    first_party |= {"mjlab", "scripts", "tests"}
+    stdlib = set(sys.stdlib_module_names)
+
+    found: dict[str, set[str]] = {}
+    sources = list(REPO_ROOT.glob("*.py")) + list((REPO_ROOT / "scripts").glob("*.py"))
+    for path in sources:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                modules = [alias.name.split(".")[0] for alias in node.names]
+            elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+                modules = [node.module.split(".")[0]]
+            else:
+                continue
+            for module in modules:
+                if module in stdlib or module in first_party:
+                    continue
+                found.setdefault(module, set()).add(path.name)
+    return found
+
+
+def test_every_direct_import_is_a_declared_dependency():
+    """Un import direct doit être une dépendance déclarée, pas un transitif.
+
+    `ml_collections` manquait à `pyproject.toml` tout en étant importé par
+    `tabletennis_env`: présent dans le venv de développement pour l'avoir
+    installé à la main un jour, absent partout ailleurs. Le défaut n'est
+    apparu qu'en louant un GPU, le conteneur mourant sur un
+    ModuleNotFoundError. Les imports qui arrivent par le transitif sont le
+    même piège en sursis: le jour où un paquet tiers cesse de les tirer, le
+    run casse loin d'ici.
+    """
+
+    declared = _declared_distributions()
+    undeclared = {
+        module: sorted(files)
+        for module, files in _third_party_imports().items()
+        if module not in declared
+    }
+    assert not undeclared, (
+        "imports non déclarés dans pyproject.toml : "
+        + ", ".join(f"{module} ({', '.join(files)})" for module, files in sorted(undeclared.items()))
+    )

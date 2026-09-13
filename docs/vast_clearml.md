@@ -21,6 +21,30 @@ VAST_DPH=0.35 ./scripts/vast.sh launch <offer_id> --seed 1
 `--platform linux/amd64` n'est pas optionnel depuis un Mac : une image arm64 ne
 démarre pas sur l'hôte, et l'erreur n'apparaît qu'une fois la machine louée.
 
+## Vérifier avant de louer
+
+```bash
+make docker-verify        # suite de tests + assemblage réel, dans l'image
+```
+
+Quatre défauts ont été découverts sur une machine louée plutôt qu'ici, chacun
+coûtant une location et un aller-retour : une dépendance non déclarée
+(`ml_collections`), un drapeau MuJoCo renommé (`mjENBL_MULTICCD`), deux
+versions de MuJoCo mutuellement incompatibles, et un `OnPolicyRunner` appelant
+une signature que la version épinglée de `rsl_rl` n'avait plus. Les trois
+premiers auraient été vus par un simple import ; le quatrième non — la suite de
+tests n'instancie jamais le runner.
+
+`scripts/preflight.py` comble ce trou : il refait ce que fait
+`train_multigpu.run_train` — environnement, runner, **une itération complète
+d'entraînement et l'évaluation avec rendu vidéo** — puis s'arrête, pour les
+deux espaces d'action. Sur CPU, sans GPU ni réseau. `docker-push` en dépend,
+donc une image qui ne passe pas la barrière ne part pas au registre.
+
+Le préflight est lent sous émulation (`--platform linux/amd64` sur un Mac
+Apple Silicon) : compter une vingtaine de minutes, l'essentiel passant dans le
+rendu hors écran de l'évaluation. C'est quelques minutes sur l'hôte cible.
+
 ## Comment le suivi s'accroche
 
 `OnPolicyRunner` écrit ses scalaires dans un `SummaryWriter` TensorBoard.

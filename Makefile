@@ -53,6 +53,14 @@ IMAGE ?= glo28/ping-rl:latest
 docker-gpu:
 	docker build --platform linux/amd64 -t $(IMAGE) .
 
+# Vérifie l'image AVANT de louer : suite de tests puis assemblage réel
+# (environnement, runner, une itération d'entraînement) pour les deux espaces
+# d'action. Tourne sur CPU, sans GPU ni réseau.
+.PHONY: docker-verify
+docker-verify:
+	docker run --rm $(IMAGE) python -m pytest tests/ -q
+	docker run --rm $(IMAGE) python scripts/preflight.py --num-envs 4
+
 .PHONY: docker-push
-docker-push: docker-gpu
+docker-push: docker-gpu docker-verify
 	docker push $(IMAGE)

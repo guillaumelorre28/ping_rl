@@ -102,6 +102,32 @@ def recursive_mirror(meshes_to_mirror, spec_copy, parent):
         recursive_mirror(meshes_to_mirror, spec_copy, child)
 
 
+def _set_multiccd(spec: mujoco.MjSpec, enabled: bool) -> None:
+    """Positionne le flag multi-contact CCD, quelle que soit sa forme.
+
+    MuJoCo a déplacé ce réglage d'un *enable* (``mjENBL_MULTICCD``, jusqu'en
+    3.4) vers un *disable* (``mjDSBL_MULTICCD``, à partir de 3.13), et la
+    révision de MuJoCo-Warp épinglée ici ne connaît ni l'un ni l'autre : elle
+    refuse ``put_model`` avec un ``NotImplementedError`` sur le bit inconnu,
+    dans les deux sens. On efface donc le flag sous les deux orthographes,
+    sans supposer laquelle existe — c'est ce qui permet au même code de
+    tourner sur le venv de développement et dans l'image.
+
+    ``enabled=True`` laisse le flag tel que le XML l'a posé : le réglage reste
+    accessible pour une révision de MuJoCo-Warp qui le supporterait, mais avec
+    celle qui est épinglée, la construction de l'environnement échouera.
+    """
+
+    if enabled:
+        return
+    enable_bit = getattr(mujoco.mjtEnableBit, "mjENBL_MULTICCD", None)
+    if enable_bit is not None:
+        spec.option.enableflags &= ~int(enable_bit)
+    disable_bit = getattr(mujoco.mjtDisableBit, "mjDSBL_MULTICCD", None)
+    if disable_bit is not None:
+        spec.option.disableflags &= ~int(disable_bit)
+
+
 def apply_ball_inertia(mj_model: mujoco.MjModel) -> None:
     """Apply physical ball inertia after compilation without changing global bounds."""
 
@@ -363,10 +389,7 @@ class TableTennisWarpEnv(VecEnv):
                     "pad",
                 }:
                     spec.delete(pair)
-        if cfg.enable_multiccd:
-            spec.option.enableflags |= int(mujoco.mjtEnableBit.mjENBL_MULTICCD)
-        else:
-            spec.option.enableflags &= ~int(mujoco.mjtEnableBit.mjENBL_MULTICCD)
+        _set_multiccd(spec, cfg.enable_multiccd)
         # spec = self._preprocess_spec(spec, remove_body_collisions=True, add_left_arm=True)
         self.mj_model = spec.compile()
         if cfg.spin_physics_enabled:

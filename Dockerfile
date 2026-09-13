@@ -71,6 +71,14 @@ COPY ball_physics.py planner.py tabletennis_env.py on_policy_runner.py \
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --locked --no-editable --no-dev
 
+# pytest dans l'image de production : trois défauts (dépendance non déclarée,
+# drapeau MuJoCo renommé, runner incompatible avec rsl_rl) ont été découverts
+# sur une machine louée parce que rien n'exerçait l'artefact avant de payer.
+# `make docker-verify` fait tourner la suite et scripts/preflight.py ICI, sur
+# l'image exacte qui sera lancée. Quelques mégaoctets contre une location.
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv pip install pytest
+
 # Le venv en tête de PATH : `python`, `torchrun` et `pytest` utilisables tels
 # quels dans --onstart-cmd, sans préfixe `uv run`.
 ENV PATH="/app/.venv/bin:${PATH}"

@@ -1,0 +1,16 @@
+# Run de vérification : le moins cher qui exerce toute la chaîne.
+#
+#   VAST_DPH=<prix> ./scripts/vast.sh queue <offer_id> jobs/verification.yaml --auto-destroy
+#
+# 100 itérations suffisent à confirmer que les courbes montent dans ClearML,
+# qu'un checkpoint atteint le registre MODELS et que l'instance se détruit
+# seule. save_interval abaissé pour qu'un checkpoint existe avant la fin —
+# avec le défaut de 300, un run de 100 itérations n'en écrirait aucun et on
+# ne vérifierait pas ce qui compte le plus.
+jobs:
+  - name: verification-image
+    args: {seed: 1}
+    overrides:
+      max_iterations: 100
+      save_interval: 40
+      eval_interval: 50

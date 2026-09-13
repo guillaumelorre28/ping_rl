@@ -10,7 +10,7 @@ from planner import (
     MIN_SERVE_NET_HEIGHT,
     NET_TOP_HEIGHT,
 )
-from tabletennis_env import apply_ball_inertia
+from tabletennis_env import _set_multiccd, apply_ball_inertia
 
 
 @pytest.fixture(scope="module")
@@ -89,3 +89,30 @@ def test_net_thresholds_stay_above_the_modelled_tape(tabletennis_model):
     assert NET_TOP_HEIGHT == pytest.approx(tape_height)
     assert MIN_SERVE_NET_HEIGHT > tape_height
     assert MIN_RETURN_NET_HEIGHT >= MIN_SERVE_NET_HEIGHT
+
+
+def test_multiccd_is_cleared_whatever_mujoco_calls_it():
+    """Le flag doit partir sous les deux orthographes, selon la version.
+
+    MuJoCo a déplacé multi-contact CCD d'un *enable* (`mjENBL_MULTICCD`,
+    jusqu'en 3.4) vers un *disable* (`mjDSBL_MULTICCD`, dès 3.13). La révision
+    de MuJoCo-Warp épinglée ignore les deux et refuse `put_model` sur le bit
+    inconnu. Écrire une seule orthographe marchait dans le venv de
+    développement et faisait planter le conteneur, ce qui n'a été découvert
+    qu'en louant un GPU.
+    """
+
+    xml_path = Path(__file__).resolve().parents[1] / "tabletennis.xml"
+    spec = mujoco.MjSpec.from_file(str(xml_path))
+    _set_multiccd(spec, False)
+    model = spec.compile()
+
+    enable_bit = getattr(mujoco.mjtEnableBit, "mjENBL_MULTICCD", None)
+    disable_bit = getattr(mujoco.mjtDisableBit, "mjDSBL_MULTICCD", None)
+    assert enable_bit is not None or disable_bit is not None, (
+        "aucune des deux orthographes n'existe : le test ne vérifie plus rien"
+    )
+    if enable_bit is not None:
+        assert not model.opt.enableflags & int(enable_bit)
+    if disable_bit is not None:
+        assert not model.opt.disableflags & int(disable_bit)
