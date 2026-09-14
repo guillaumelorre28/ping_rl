@@ -180,7 +180,18 @@ def tabletennis_p2_cfg():
         model_path="tabletennis.xml",
         num_envs=1024,
         eval_env=False,
-        nconmax=50000,
+        # Sémantique de MuJoCo Warp : ces deux valeurs sont PAR MONDE.
+        # `nconmax` est une réserve mise en commun (un monde peut dépasser sa
+        # part tant que le total tient) ; `njmax` est un plafond strict par
+        # monde. Mesuré sur 400 pas, 128 environnements, les deux espaces
+        # d'action : pic de 122 contraintes par monde (muscle_pd, 97 en
+        # joint_pd) et ~6 contacts par monde. D'où 200 et 200 — respectivement
+        # 64 % et ~30x de marge.
+        #
+        # Le 50000 qui figurait ici avait été écrit pour une sémantique
+        # globale : par monde, il aurait alloué 51 millions de créneaux à
+        # 1024 environnements.
+        nconmax=200,
         njmax=200,
         frame_skip=5,
         enable_multiccd=False,
@@ -397,12 +408,18 @@ class TableTennisWarpEnv(VecEnv):
         self.num_envs = cfg.num_envs
         self.max_episode_length = cfg.max_episode_length
         self.device = torch.device(device)
-        # sim_cfg = SimulationCfg(
-        #     nconmax=cfg.nconmax,
-        #     njmax=cfg.njmax,
-        #     mujoco=MujocoCfg(integrator="euler"),
-        # )
-        sim_cfg = SimulationCfg(nconmax=100)
+        # `njmax` et `nconmax` n'étaient pas transmis : le bloc était commenté
+        # depuis la release initiale, et `njmax=None` faisait retomber MuJoCo
+        # Warp sur 64. La simulation débordait donc en permanence
+        # (« nefc overflow »), abandonnant silencieusement des contraintes
+        # pendant les contacts balle/raquette/table — le régime même que ce
+        # projet modélise. Les avertissements noyaient en outre la moitié du
+        # tampon de log récupérable sur une instance louée.
+        #
+        # L'intégrateur reste celui de mjlab (`implicitfast`). Le bloc
+        # commenté demandait `euler` ; le rétablir changerait l'intégration,
+        # ce qui est une décision distincte de la réparation de ce câblage.
+        sim_cfg = SimulationCfg(nconmax=cfg.nconmax, njmax=cfg.njmax)
         self.sim = Simulation(num_envs=self.num_envs, cfg=sim_cfg, model=self.mj_model, device=device)
         # domain randomization
         self.sim.expand_model_fields(["body_mass", "geom_friction", "body_pos"])
@@ -431,6 +448,15 @@ class TableTennisWarpEnv(VecEnv):
         self._contact_separation_steps = torch.zeros(
             self.num_envs, 6, device=device, dtype=torch.int
         )
+        # Diagnostic de corruption d'état. Trois `nan_to_num` muets — deux sur
+        # les observations, un sur la récompense — font passer un
+        # environnement dont la physique a divergé pour un environnement
+        # ordinaire à récompense nulle. Le run continue, rien ne le signale, et
+        # toute moyenne par terme devient NaN : les courbes se vident sans que
+        # le total bouge. On compte AVANT de masquer.
+        self.nonfinite_reward_envs = torch.zeros(self.num_envs, device=device, dtype=torch.bool)
+        self.nonfinite_obs_envs = torch.zeros(self.num_envs, device=device, dtype=torch.bool)
+        self._nonfinite_seen = False
         self.post_hit_ball_vel = torch.zeros(self.num_envs, 3, device=device)
         self.post_hit_ball_spin = torch.zeros(self.num_envs, 3, device=device)
         self.has_post_hit_state = torch.zeros(self.num_envs, device=device, dtype=torch.bool)
@@ -1022,9 +1048,18 @@ class TableTennisWarpEnv(VecEnv):
         obs_list = list([obs_dict[k].clone() for k in self.cfg.obs_keys])
         critic_obs_list = list([critic_obs_dict[k].clone() for k in self.cfg.critic_obs_keys])
 
-        self.current_obs = torch.cat(obs_list, dim=-1).nan_to_num(0)
+        actor_obs = torch.cat(obs_list, dim=-1)
+        critic_obs = torch.cat(critic_obs_list, dim=-1)
+        # Une observation non finie remplacée par 0 n'est pas neutre : la
+        # politique reçoit un état plausible mais faux, et apprend dessus.
+        self.nonfinite_obs_envs = ~(
+            torch.isfinite(actor_obs).all(dim=-1) & torch.isfinite(critic_obs).all(dim=-1)
+        )
+        self._report_nonfinite("observation", self.nonfinite_obs_envs)
+
+        self.current_obs = actor_obs.nan_to_num(0)
         self.extras = {
-            "observations": {"critic": torch.cat(critic_obs_list, dim=-1).nan_to_num(0)},
+            "observations": {"critic": critic_obs.nan_to_num(0)},
             "obs_dict": obs_dict,
             "log": {},
             "time_outs": torch.zeros(self.num_envs, device=self.device, dtype=torch.bool),
@@ -1371,7 +1406,39 @@ class TableTennisWarpEnv(VecEnv):
             dim=-1,
         )
 
+        # Un terme peut être non fini sans atteindre le total (poids nul) tout
+        # en empoisonnant les courbes : on inspecte le dictionnaire entier.
+        nonfinite = ~torch.isfinite(reward)
+        for value in reward_dict.values():
+            nonfinite |= ~torch.isfinite(value)
+        self.nonfinite_reward_envs = nonfinite
+        self._report_nonfinite(
+            "récompense", nonfinite, terms=[k for k, v in reward_dict.items() if not torch.isfinite(v).all()]
+        )
+
         return reward.nan_to_num(0), reward_dict
+
+    def _report_nonfinite(self, origin: str, mask: torch.Tensor, terms: list | None = None) -> None:
+        """Signale une corruption d'état, une seule fois, avec de quoi la situer.
+
+        Émettre à chaque pas noierait la sortie — le débordement `nefc` occupe
+        déjà la moitié du tampon de log récupérable sur une instance louée. Le
+        compte, lui, part à chaque pas dans `extras['log']` : c'est une courbe
+        comme une autre, donc visible dans ClearML.
+        """
+
+        count = int(mask.sum())
+        if not count or self._nonfinite_seen:
+            return
+        self._nonfinite_seen = True
+        where = f" — termes touchés : {', '.join(terms)}" if terms else ""
+        print(
+            f"[ÉTAT CORROMPU] {count}/{self.num_envs} environnement(s) non finis "
+            f"({origin}) au temps t={float(self.data.time[0]):.2f}s{where}. "
+            f"Ils sont masqués par nan_to_num et continuent d'entraîner la politique. "
+            f"Suivre 'diag/nonfinite_reward_envs' et 'diag/nonfinite_obs_envs'.",
+            flush=True,
+        )
 
     def _cal_paddle_hand_rel_pose(self) -> tuple[torch.Tensor, torch.Tensor]:
         """Calculate the relative position and orientation between paddle and hand"""
@@ -2031,6 +2098,10 @@ class TableTennisWarpEnv(VecEnv):
 
         for key in reward_dict.keys():
             extras["log"]["reward/" + key] = reward_dict[key]
+        # Fraction d'environnements corrompus, remontée comme une métrique
+        # ordinaire : une courbe qui décolle date l'incident à l'itération près.
+        extras["log"]["diag/nonfinite_reward_envs"] = self.nonfinite_reward_envs.float()
+        extras["log"]["diag/nonfinite_obs_envs"] = self.nonfinite_obs_envs.float()
 
         return obs, reward, done, extras
 

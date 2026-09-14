@@ -69,6 +69,26 @@ runs concurrents écrivant les mêmes courbes sous le même nom.
 | `model_<it>.pt` | dès l'écriture, toutes les `upload_interval_s` | MODELS |
 | Vidéos d'évaluation | idem | ARTIFACTS |
 | `train_hours`, `train_cost_usd` | à la fin | SCALARS (valeurs uniques) |
+| `diag/nonfinite_reward_envs`, `diag/nonfinite_obs_envs` | en continu | SCALARS |
+
+### Les deux courbes `diag/` sont à surveiller
+
+Elles donnent la fraction d'environnements dont l'état a divergé. Elles doivent
+rester à zéro ; une qui décolle date l'incident à l'itération près.
+
+Elles existent parce que trois `nan_to_num` muets — deux sur les observations,
+un sur la récompense — faisaient passer un environnement corrompu pour un
+environnement ordinaire à récompense nulle. Sur le run du 13 septembre 2026,
+trois termes sont passés en NaN à l'itération 18 sans jamais en revenir : le
+total n'a baissé que de 8 %, donc rien n'a alerté, mais **4,2 points par pas
+étaient gagnés sans être journalisés**. ClearML sérialisant un NaN en `0.0`,
+les courbes semblaient simplement plates.
+
+Les moyennes du runner écartent désormais les entrées non finies plutôt que de
+laisser un seul environnement effacer une série entière, et remontent le
+nombre d'épisodes écartés sous `diag/dropped_episodes/`. Quand il ne reste
+aucune donnée saine, rien n'est tracé : une absence se lit comme une absence,
+un zéro se lit comme une mesure.
 
 Les checkpoints partent **pendant** le run, pas seulement à la fin : un
 entraînement PPO dure des heures, et une instance interrompue ou détruite ne

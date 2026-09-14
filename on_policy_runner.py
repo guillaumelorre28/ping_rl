@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import math
 import os
 import statistics
 import time
@@ -27,6 +28,32 @@ from rsl_rl.modules import (
     StudentTeacherRecurrent,
 )
 from rsl_rl.utils import store_code_state
+
+
+
+def finite_mean(values):
+    """Moyenne en écartant les entrées non finies, ou ``None`` s'il n'en reste.
+
+    Un environnement dont la physique a divergé produit des NaN. Les moyennes
+    de rsl_rl les propageaient à la série entière, et ClearML sérialise un NaN
+    en ``0.0`` : la courbe devenait un zéro parfaitement crédible alors que la
+    récompense continuait d'être versée. Mesuré sur un run réel : 4,2 points
+    par pas gagnés mais absents du journal, à partir de l'itération 18.
+
+    Renvoie aussi le nombre d'entrées écartées, pour que l'appelant puisse le
+    remonter plutôt que de perdre silencieusement l'information.
+    """
+
+    if isinstance(values, torch.Tensor):
+        finite = torch.isfinite(values)
+        kept = int(finite.sum())
+        if kept == 0:
+            return None, values.numel()
+        return values[finite].mean(), values.numel() - kept
+    healthy = [v for v in values if math.isfinite(v)]
+    if not healthy:
+        return None, len(values)
+    return statistics.mean(healthy), len(values) - len(healthy)
 
 
 class OnPolicyRunner:
@@ -379,7 +406,18 @@ class OnPolicyRunner:
         for key in self.episode_infos:
             if len(self.episode_infos[key]) == 0:
                 continue
-            value = statistics.mean(self.episode_infos[key])
+            # Un seul épisode corrompu suffisait à rendre NaN la moyenne de
+            # TOUTE la série, et ClearML affiche un NaN comme un zéro : la
+            # courbe semblait plate à zéro alors que la récompense continuait
+            # d'être versée. On moyenne sur les épisodes sains et on dit
+            # combien ont été écartés.
+            value, dropped = finite_mean(self.episode_infos[key])
+            if value is None:
+                continue
+            if dropped:
+                self.writer.add_scalar(
+                    "diag/dropped_episodes/" + key, dropped, locs["it"]
+                )
             self.writer.add_scalar("episode_" + key, value, locs["it"])
             ep_string += f"""{f'episode_{key}:':>{pad}} {value:.4f}\n"""
 
@@ -397,7 +435,12 @@ class OnPolicyRunner:
                     if len(ep_info[key].shape) == 0:
                         ep_info[key] = ep_info[key].unsqueeze(0)
                     infotensor = torch.cat((infotensor, ep_info[key].to(self.device)))
-                value = torch.mean(infotensor)
+                # Même raison qu'au-dessus : moyenner sur les entrées finies
+                # plutôt que laisser un environnement divergent effacer la
+                # courbe. `diag/nonfinite_*` porte le compte des corrompus.
+                value, _ = finite_mean(infotensor)
+                if value is None:
+                    continue
                 # log to logger and terminal
                 if "/" in key:
                     self.writer.add_scalar(key, value, locs["it"])
