@@ -179,10 +179,27 @@ mais rapporté aux échelles (6,9 m/s, 28 rad/s, 338 rad/s) cela fait au plus
 `tests/test_compiled_flight.py` verrouille les deux.
 
 `dynamic=True` produit un seul graphe pour toutes les tailles de lot —
-indispensable, le nombre d'environnements resetés changeant à chaque pas. La
-compilation coûte environ **150 secondes au premier run** (une trentaine de
-graphes) : négligeable sur 3000 itérations, visible sur un run court. Elle
+indispensable, le nombre d'environnements resetés changeant à chaque pas. Elle
 retombe seule sur l'exécution directe si elle échoue.
+
+**Gain mesuré**, A/B dans le même processus sur RTX 3090, 1024 environnements :
+
+```
+1144 ms/pas  ->  240 ms/pas     x4,76
+planificateur : 559 ms/appel -> 63 ms/appel     x8,8
+```
+
+**Et son coût : ~8,5 minutes de compilation au démarrage** (contre ~150 s sur
+un poste de développement). Sur 3000 itérations c'est 3,5 % ; sur une
+vérification de 100 itérations, cela dominerait le run. D'où le réglage :
+mettre `compile_flight: false` pour les runs courts.
+
+Réserve sur la mesure : les deux points n'étaient pas au même niveau de
+désynchronisation — 3,5 environnements resetés par pas contre 15,5 après la
+chauffe supplémentaire, alors que le régime établi vaut num_envs divisé par la
+longueur d'épisode, soit ~15. La variante compilée a donc fait ~11 % d'appels
+au planificateur en plus, ce qui sous-estime légèrement le gain. La chauffe de
+150 pas du profileur ne suffit pas à atteindre le régime établi.
 
     ./scripts/vast.sh profile <offer_id> --auto-destroy --compare-compiled
 
