@@ -54,6 +54,11 @@ def main() -> int:
     parser.add_argument("--steps", type=int, default=20, help="pas mesurés par régime")
     parser.add_argument("--warmup", type=int, default=150, help="pas pour désynchroniser")
     parser.add_argument("--trace-steps", type=int, default=3, help="pas capturés dans la trace")
+    parser.add_argument(
+        "--compare-compiled",
+        action="store_true",
+        help="mesure le régime établi SANS puis AVEC compilation, dans le même processus",
+    )
     parser.add_argument("--out", default="/workspace/profile")
     args = parser.parse_args()
 
@@ -84,6 +89,12 @@ def main() -> int:
     env_cfg = apply_environment_config(tabletennis_p2_cfg(), config)
     env_cfg.num_envs = args.num_envs
     env_cfg.action_type = args.action_type
+    # En mode comparaison, on part SANS compilation : c'est la référence, et
+    # l'activer plus tard dans le même processus donne un A/B sur la même
+    # machine. Comparer deux locations différentes n'aurait rien prouvé — les
+    # hôtes varient trop.
+    if args.compare_compiled:
+        env_cfg.compile_flight = False
     env = TableTennisWarpEnv(env_cfg, device=device)
     env.reset()
     env.curr_iter, env.total_iter = 40, 100  # curriculum à fond : le cas coûteux
@@ -177,6 +188,30 @@ def main() -> int:
     text, wall_steady = measure("désynchronisé")
     lines.append(text)
     print(text, flush=True)
+
+    if args.compare_compiled:
+        import ball_physics
+
+        print("\nActivation de la compilation du pas de vol…", flush=True)
+        if ball_physics.enable_compiled_flight(True):
+            # Les premiers pas paient la compilation (mesuré : ~17 graphes,
+            # stabilisé en une dizaine de pas). On ne mesure qu'après.
+            rollout(30)
+            text, wall_compiled = measure("désynchronisé + compilé")
+            lines.append(text)
+            print(text, flush=True)
+            gain = wall_steady / wall_compiled if wall_compiled else float("nan")
+            verdict_compile = [
+                "",
+                f"=== compilation : x{gain:.2f} sur le régime établi ===",
+                f"  {1000 * wall_steady / args.steps:.0f} ms/pas -> "
+                f"{1000 * wall_compiled / args.steps:.0f} ms/pas",
+            ]
+            lines += verdict_compile
+            print("\n".join(verdict_compile), flush=True)
+            extra["gain_compilation"] = gain
+        else:
+            print("(compilation indisponible : comparaison impossible)", flush=True)
 
     ratio = wall_steady / wall_phase if wall_phase else float("nan")
     verdict = [

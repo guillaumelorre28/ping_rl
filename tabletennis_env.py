@@ -9,6 +9,7 @@ import torch
 from ball_physics import (
     DEFAULT_BALL_PHYSICS,
     aerodynamic_force_components,
+    enable_compiled_flight,
     propagate_to_x,
     racket_impact,
     table_impact,
@@ -206,6 +207,10 @@ def tabletennis_p2_cfg():
         launch_pool_refresh=100_000,
         launch_pool_curriculum_step=0.05,
         plan_candidates=8,
+        # Compile le pas d'intégration du vol (voir ball_physics.enable_compiled_flight).
+        # Coûte une dizaine de secondes au démarrage, et retombe seule sur
+        # l'exécution directe si la compilation échoue.
+        compile_flight=True,
         frame_skip=5,
         enable_multiccd=False,
         action_type="joint_pd",  # choose from joint_pd, muscle_pd, muscle_act, muscle_vae
@@ -432,6 +437,9 @@ class TableTennisWarpEnv(VecEnv):
         # L'intégrateur reste celui de mjlab (`implicitfast`). Le bloc
         # commenté demandait `euler` ; le rétablir changerait l'intégration,
         # ce qui est une décision distincte de la réparation de ce câblage.
+        if getattr(cfg, "compile_flight", False):
+            enable_compiled_flight(True)
+
         sim_cfg = SimulationCfg(nconmax=cfg.nconmax, njmax=cfg.njmax)
         self.sim = Simulation(num_envs=self.num_envs, cfg=sim_cfg, model=self.mj_model, device=device)
         # domain randomization

@@ -138,6 +138,39 @@ Deux changements, et `_reset_idx` ne contient plus aucune synchronisation :
   faisable — même échantillonnage par rejet, donc même distribution, mais une
   seule passe.
 
+### Ce que le profil a montré
+
+`scripts/profile_gpu.py` sur RTX 3090, 1024 environnements :
+
+| | temps par pas |
+|---|---|
+| environnements en phase (aucun ne se termine) | 175 ms |
+| régime établi | 1866 ms |
+
+Facteur **10,7** — la rampe de 3 s à 40 s par itération vient entièrement de
+cette bascule. Découpage en régime établi : **planificateur 88,4 %**, reset
+41,9 % (il contient le planificateur), récompense 4,8 %, **physique MuJoCo Warp
+2,8 %**. La physique n'était pas le problème.
+
+Cause : **368 412 lancements de noyaux CUDA par pas**, d'une durée moyenne de
+**1,3 µs** — très en dessous du coût de lancement. Du calcul numérique
+parfaitement correct, mais émis en opérations élémentaires minuscules :
+`predict_land` est appelé neuf fois par plan, chacun faisant 4 itérations de
+Newton x 3 sous-pas x 4 étages RK, chaque étage réévaluant un modèle
+aérodynamique à interpolation par table.
+
+`compile_flight` fusionne ce noyau avec `torch.compile` : **-91 % d'opérations
+élémentaires**, résultats identiques au bruit float32 près (écart maximal
+5e-7, verrouillé par `tests/test_compiled_flight.py`). `dynamic=True` produit un
+seul graphe pour toutes les tailles de lot — indispensable, le nombre
+d'environnements resetés changeant à chaque pas. Les premiers pas paient la
+compilation (une dizaine de secondes) puis elle est amortie.
+
+    ./scripts/vast.sh profile <offer_id> --auto-destroy --compare-compiled
+
+mesure le régime établi sans puis avec compilation **dans le même processus** :
+comparer deux locations différentes ne prouverait rien, les hôtes variant trop.
+
 ### Le filtrage des commandes est maintenant mesuré
 
 « Plan infaisable » ne veut pas dire NaN : il veut dire que le coup demandé

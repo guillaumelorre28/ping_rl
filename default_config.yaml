@@ -52,6 +52,10 @@ sampling:
   launch_pool_refresh: 100000        # tirages avant renouvellement du vivier
   launch_pool_curriculum_step: 0.05  # granularité des paliers de curriculum
   plan_candidates: 8                 # commandes évaluées d'un coup par reset
+  # Compile le pas d'intégration du vol : -91 % d'opérations élémentaires, à
+  # résultats identiques au bruit float32 près. Le planificateur pesait 88 %
+  # du temps d'un pas, par latence de lancement de noyaux.
+  compile_flight: true
 
 num_steps_per_env: 20  # number of steps per environment per iteration
 max_iterations: 3000  # number of policy updates

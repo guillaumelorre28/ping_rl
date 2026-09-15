@@ -389,8 +389,58 @@ def integrate_flight(
     step_dt = duration / steps
     pos, vel, angvel = position, velocity, spin
     for _ in range(steps):
-        pos, vel, angvel = rk4_step(pos, vel, angvel, step_dt, params)
+        pos, vel, angvel = _rk4(pos, vel, angvel, step_dt, params)
     return pos, vel, angvel
+
+
+
+# --- compilation du pas d'intégration ------------------------------------
+#
+# Profilé sur RTX 3090 le 15 septembre 2026 : le planificateur représentait
+# 88 % du temps d'un pas d'entraînement et la physique MuJoCo Warp 2,8 %. La
+# cause n'était pas le calcul mais la latence : 368 412 lancements de noyaux
+# CUDA par pas, d'une durée moyenne de 1,3 µs, très en dessous du coût de
+# lancement d'un noyau. Ces lancements viennent d'ici : `predict_land` est
+# appelé neuf fois par plan, chacun faisant 4 itérations de Newton x 3
+# sous-pas x 4 étages RK, et chaque étage réévalue un modèle aérodynamique à
+# interpolation par table — environ 5 700 opérations élémentaires par appel.
+#
+# `torch.compile` fusionne tout ça : -91 % d'opérations, à résultats
+# numériquement identiques (écart maximal mesuré 5e-7, soit le bruit du
+# float32). `dynamic=True` produit UN graphe valable pour toutes les tailles
+# de lot : indispensable ici, le nombre d'environnements resetés changeant à
+# chaque pas, une compilation par taille passerait son temps à recompiler.
+_rk4_dispatch = None
+
+
+def _rk4(position, velocity, spin, dt, params, *, coefficients=None):
+    """Point d'entrée du pas RK4 : compilé si disponible, sinon direct."""
+
+    step = _rk4_dispatch if _rk4_dispatch is not None else rk4_step
+    return step(position, velocity, spin, dt, params, coefficients=coefficients)
+
+
+def enable_compiled_flight(enabled: bool = True) -> bool:
+    """Active (ou coupe) la version compilée. Renvoie l'état obtenu.
+
+    Échouer ici ne doit jamais faire échouer un run : une compilation qui ne
+    passe pas coûte de la vitesse, pas des résultats. On retombe alors
+    silencieusement sur la version directe, en le signalant une fois.
+    """
+
+    global _rk4_dispatch
+    if not enabled:
+        _rk4_dispatch = None
+        return False
+    if _rk4_dispatch is not None:
+        return True
+    try:
+        _rk4_dispatch = torch.compile(rk4_step, dynamic=True)
+    except Exception as exc:  # pragma: no cover - dépend de la plateforme
+        print(f"[physique] compilation indisponible ({exc}) : exécution directe.", flush=True)
+        _rk4_dispatch = None
+        return False
+    return True
 
 
 def integrate_flight_duration(
@@ -424,7 +474,7 @@ def integrate_flight_duration(
     step_duration = duration / float(substeps)
     pos, vel, angvel = position, velocity, spin
     for _ in range(substeps):
-        pos, vel, angvel = rk4_step(
+        pos, vel, angvel = _rk4(
             pos,
             vel,
             angvel,

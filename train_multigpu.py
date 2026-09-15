@@ -32,6 +32,7 @@ def apply_environment_config(env_cfg, config: dict):
             "launch_pool_curriculum_step", env_cfg.launch_pool_curriculum_step
         )
         env_cfg.plan_candidates = sampling_cfg.get("plan_candidates", env_cfg.plan_candidates)
+        env_cfg.compile_flight = sampling_cfg.get("compile_flight", env_cfg.compile_flight)
     env_cfg.enable_multiccd = config.get("enable_multiccd", env_cfg.enable_multiccd)
     env_cfg.enable_domain_randomization = config.get(
         "enable_domain_randomization", env_cfg.enable_domain_randomization
