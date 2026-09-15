@@ -34,6 +34,25 @@ policy:
   # rnn_num_layers: 1
 
 
+# Nombre d'environnements simulés en parallèle.
+#
+# 2048 a été essayé le 15 septembre 2026 et RETIRÉ : le run meurt pendant
+# l'évaluation de l'itération 0, sans traceback — donc tué par signal et non
+# par exception. À 1024 la mémoire GPU d'une RTX 3090 est à 33 % (7,9 Go), donc
+# ~16 Go à 2048, auxquels l'évaluation ajoute les tampons de rendu hors écran.
+# Le préflight, qui tourne à 4 environnements, ne pouvait structurellement pas
+# le voir. Remonter ce nombre demande de vérifier la mémoire pendant une
+# évaluation, pas seulement pendant l'entraînement.
+num_envs: 1024
+
+# Échantillonnage des conditions de lancer et des commandes. Voir
+# `_ensure_launch_pool` et le bloc des candidats de plan dans tabletennis_env.
+sampling:
+  launch_pool_size: 65536            # lancers jouables gardés en réserve
+  launch_pool_refresh: 100000        # tirages avant renouvellement du vivier
+  launch_pool_curriculum_step: 0.05  # granularité des paliers de curriculum
+  plan_candidates: 8                 # commandes évaluées d'un coup par reset
+
 num_steps_per_env: 20  # number of steps per environment per iteration
 max_iterations: 3000  # number of policy updates
 empirical_normalization: true

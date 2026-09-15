@@ -70,6 +70,7 @@ runs concurrents écrivant les mêmes courbes sous le même nom.
 | Vidéos d'évaluation | idem | ARTIFACTS |
 | `train_hours`, `train_cost_usd` | à la fin | SCALARS (valeurs uniques) |
 | `diag/nonfinite_reward_envs`, `diag/nonfinite_obs_envs` | en continu | SCALARS |
+| `diag/plan_resamples`, `diag/infeasible_plans` | en continu | SCALARS |
 
 ### Les deux courbes `diag/` sont à surveiller
 
@@ -110,6 +111,45 @@ perdre une courbe est ennuyeux, perdre six heures de GPU ne l'est pas.
 Pour travailler sans serveur : `tracking.offline: true` écrit tout localement,
 réimportable ensuite avec `Task.import_offline_session`. Pour couper
 complètement : `tracking.enabled: false`.
+
+## Où passe le temps
+
+Sur le run du 14 septembre 2026, la collecte occupait **99,3 %** du temps et
+l'apprentissage 0,7 %, pour **27 % d'utilisation GPU**. Le GPU attendait.
+
+La cause était dans `_reset_idx`, qui contenait à lui seul toutes les
+synchronisations GPU vers hôte du fichier : deux rejets bouclant sur
+`.all().item()`, soit jusqu'à 28 allers-retours sérialisés par reset. Or un
+reset a lieu à **chaque pas de contrôle** — avec 2048 environnements et des
+épisodes de ~69 pas, une trentaine d'environnements se terminent par pas.
+
+La mesure qui l'a établi : le coût d'un reset était presque indépendant du
+nombre d'environnements concernés — 0,46 s pour **un seul**, 0,75 s pour 512.
+Multiplier le travail par 512 ne coûtait que 63 % de plus. C'est la signature
+d'un coût de latence, pas de calcul.
+
+Deux changements, et `_reset_idx` ne contient plus aucune synchronisation :
+
+- **Vivier de lancers.** Le tirage de la balle entrante ne dépend que du niveau
+  de curriculum, jamais de la politique. Il est fait une fois par palier
+  (`launch_pool_curriculum_step`), et les resets se servent par indexation.
+- **Candidats de commande groupés.** Les relances du planificateur deviennent K
+  tirages indépendants évalués en un appel, dont on retient le premier
+  faisable — même échantillonnage par rejet, donc même distribution, mais une
+  seule passe.
+
+### Le filtrage des commandes est maintenant mesuré
+
+« Plan infaisable » ne veut pas dire NaN : il veut dire que le coup demandé
+exigerait une raquette au-delà de ses limites (12 m/s, 30 rad/s). Le rejeter a
+donc un sens, mais il biaise la distribution des effets demandés vers ce qui
+est atteignable — un biais jusqu'ici invisible, car `target_plan_valid` était
+écrit et jamais lu.
+
+`diag/plan_resamples` donne l'indice du candidat retenu (0 = le premier tirage
+convenait) et `diag/infeasible_plans` la part des épisodes où aucun des K ne
+convenait. Mesuré à curriculum plein : indice moyen **0,134** et **0 %**
+d'infaisables avec K=8.
 
 ## Files de runs
 

@@ -13,6 +13,11 @@
 #       exécute une liste de runs en séquence (voir jobs/example.yaml) ; le
 #       fichier local est embarqué dans la commande de démarrage, donc changer
 #       la file ne demande AUCUN rebuild d'image
+#   ./scripts/vast.sh profile <offer_id> [--auto-destroy] [args de profile_gpu.py]
+#       mesure où part le temps d'un rollout SUR LA CIBLE : découpage par
+#       section en temps GPU réel, en phase puis désynchronisé, et nombre de
+#       lancements de noyaux. Le rapport part dans ClearML en artefact, car
+#       l'instance s'autodétruit et les logs vast sont tronqués.
 #   ./scripts/vast.sh list                          # instances en cours
 #   ./scripts/vast.sh logs <instance_id>
 #   ./scripts/vast.sh ssh <instance_id>
@@ -27,6 +32,7 @@
 #   ./scripts/vast.sh search
 #   ./scripts/vast.sh launch 1234567 --gpu-ids all --seed 1
 #   VAST_DPH=0.35 ./scripts/vast.sh queue 1234567 jobs/example.yaml --auto-destroy
+#   VAST_DPH=0.35 ./scripts/vast.sh profile 1234567 --auto-destroy --num-envs 1024
 #
 # Les variables CLEARML_API_* (du shell, sinon du .env) sont transmises à
 # l'instance. Les checkpoints et vidéos partent vers ClearML PENDANT le run
@@ -295,6 +301,25 @@ print(f'{len(offres)} offre(s) ; tri par coût TOTAL (calcul + stockage).')
 
     echo "Arguments : $args"
     create_instance "$offer" "$onstart" "train"
+    ;;
+
+  profile)
+    [[ $# -ge 1 ]] || { echo "usage: $0 profile <offer_id> [--auto-destroy] [args de profile_gpu.py]" >&2; exit 1; }
+    offer=$1
+    shift
+    parse_flags "$@"
+    set -- "${REMAINING[@]+"${REMAINING[@]}"}"
+    build_env_args
+
+    # Un seul GPU suffit : on mesure le coût d'un rollout, pas la mise à
+    # l'échelle multi-cartes.
+    run_cmd="python scripts/profile_gpu.py $*"
+
+    onstart="cd /app && set -o pipefail && { $run_cmd ; } 2>&1 | tee /workspace/profile.log"
+    [[ $AUTODESTROY -eq 1 ]] && onstart+="$(destroy_snippet)"
+
+    echo "Arguments : $*"
+    create_instance "$offer" "$onstart" "profile"
     ;;
 
   queue)

@@ -21,6 +21,17 @@ def apply_environment_config(env_cfg, config: dict):
     """Apply user-facing environment overrides from the training YAML."""
 
     env_cfg.action_type = config.get("action_type", env_cfg.action_type)
+    env_cfg.num_envs = config.get("num_envs", env_cfg.num_envs)
+    sampling_cfg = config.get("sampling", {})
+    if sampling_cfg:
+        env_cfg.launch_pool_size = sampling_cfg.get("launch_pool_size", env_cfg.launch_pool_size)
+        env_cfg.launch_pool_refresh = sampling_cfg.get(
+            "launch_pool_refresh", env_cfg.launch_pool_refresh
+        )
+        env_cfg.launch_pool_curriculum_step = sampling_cfg.get(
+            "launch_pool_curriculum_step", env_cfg.launch_pool_curriculum_step
+        )
+        env_cfg.plan_candidates = sampling_cfg.get("plan_candidates", env_cfg.plan_candidates)
     env_cfg.enable_multiccd = config.get("enable_multiccd", env_cfg.enable_multiccd)
     env_cfg.enable_domain_randomization = config.get(
         "enable_domain_randomization", env_cfg.enable_domain_randomization

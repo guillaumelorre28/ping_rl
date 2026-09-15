@@ -193,6 +193,19 @@ def tabletennis_p2_cfg():
         # 1024 environnements.
         nconmax=200,
         njmax=200,
+        # Échantillonnage des conditions de lancer et des commandes.
+        # Les deux rejets d'origine bouclaient avec un `.all().item()` par tour,
+        # soit jusqu'à 28 synchronisations GPU->hôte par reset — et un reset a
+        # lieu à chaque pas de contrôle en régime établi (num_envs / longueur
+        # d'épisode environnements se terminent par pas). Mesuré : le coût d'un
+        # reset était quasi indépendant du nombre d'environnements concernés
+        # (0,46 s pour 1, 0,75 s pour 512), signature d'un coût de latence et
+        # non de calcul. Résultat : 99,3 % du temps en collecte, 27 %
+        # d'utilisation GPU.
+        launch_pool_size=65536,
+        launch_pool_refresh=100_000,
+        launch_pool_curriculum_step=0.05,
+        plan_candidates=8,
         frame_skip=5,
         enable_multiccd=False,
         action_type="joint_pd",  # choose from joint_pd, muscle_pd, muscle_act, muscle_vae
@@ -454,6 +467,16 @@ class TableTennisWarpEnv(VecEnv):
         # ordinaire à récompense nulle. Le run continue, rien ne le signale, et
         # toute moyenne par terme devient NaN : les courbes se vident sans que
         # le total bouge. On compte AVANT de masquer.
+        # Ampleur du filtrage des commandes par la faisabilité : `plan_resamples`
+        # est l'indice du candidat retenu (0 = le premier tirage convenait),
+        # `plan_infeasible` marque les épisodes où aucun candidat ne convenait.
+        # Ce filtrage biaise la distribution des effets demandés vers ce qui est
+        # atteignable ; il était jusqu'ici invisible.
+        self.plan_resamples = torch.zeros(self.num_envs, device=device)
+        self.plan_infeasible = torch.zeros(self.num_envs, device=device)
+        self._launch_pool = None
+        self._launch_pool_bucket = None
+        self._launch_pool_draws = 0
         self.nonfinite_reward_envs = torch.zeros(self.num_envs, device=device, dtype=torch.bool)
         self.nonfinite_obs_envs = torch.zeros(self.num_envs, device=device, dtype=torch.bool)
         self._nonfinite_seen = False
@@ -1542,6 +1565,123 @@ class TableTennisWarpEnv(VecEnv):
         return 1.0 + (final_scale - 1.0) * progress
 
 
+    def _sample_valid_launches(self, n_candidates: int, spin_curriculum_scale: float):
+        """Tire ``n_candidates`` lancers et renvoie ceux qui sont jouables.
+
+        Une seule passe vectorisée, sans boucle : la validité de tous les
+        candidats est évaluée d'un coup, puis les valides sont extraits par
+        masque. Un lancer est jouable s'il franchit le filet assez haut et si
+        la balle arrive dans la zone atteignable par le bras.
+        """
+
+        qpos, qvel = self._rand_ball_pos_and_vel(n_candidates)
+        if self.cfg.spin_physics_enabled:
+            if self.cfg.incoming_spin_enabled:
+                spin_command = (
+                    torch.rand((n_candidates, 3), device=self.device)
+                    * (self.incoming_spin_high - self.incoming_spin_low)
+                    + self.incoming_spin_low
+                ) * spin_curriculum_scale
+            else:
+                spin_command = torch.zeros(n_candidates, 3, device=self.device)
+            spin = trajectory_spin_to_world(spin_command, qvel)
+            _, net_pos, _, _, crossed_net = propagate_to_x(
+                qpos,
+                qvel,
+                spin,
+                0.0,
+                max_time=1.0,
+                params=self.ball_physics,
+                root_iterations=self.cfg.spin_planner_root_iterations,
+                integration_substeps=self.cfg.spin_planner_integration_substeps,
+            )
+            ok = crossed_net & (net_pos[:, 2] > MIN_SERVE_NET_HEIGHT)
+            incoming = predict_incoming_hit(
+                qpos,
+                qvel,
+                spin,
+                event_root_iterations=self.cfg.spin_planner_root_iterations,
+                event_integration_substeps=self.cfg.spin_planner_integration_substeps,
+                physics=self.ball_physics,
+            )
+            hit_pos = incoming.position
+            ok &= incoming.valid
+        else:
+            spin = torch.zeros_like(qvel)
+            ok = self._check_ball_cross_net(qpos, qvel)
+            t_land, land_pos, land_vel = compute_land(qpos, qvel)
+            bounce_vel = land_vel.clone()
+            bounce_vel[:, 2] = -bounce_vel[:, 2]
+            hit_pos, _, _ = compute_hit_pos(t_land, land_pos, bounce_vel)
+
+        ok &= (
+            (hit_pos[:, 1] > self.hit_xyz_low[1])
+            & (hit_pos[:, 1] < self.hit_xyz_high[1])
+            & (hit_pos[:, 2] > self.hit_xyz_low[2])
+            & (hit_pos[:, 2] < self.hit_xyz_high[2])
+        )
+        return qpos[ok], qvel[ok], spin[ok]
+
+    def _ensure_launch_pool(self, spin_curriculum_scale: float) -> None:
+        """(Re)construit le vivier si le curriculum a bougé ou s'il est épuisé.
+
+        Le tirage d'un lancer ne dépend QUE du niveau de curriculum, jamais de
+        la politique : il n'a donc rien à faire dans le chemin chaud. On le
+        fait une fois par palier de curriculum, et on sert les resets par
+        simple indexation. Le palier est quantifié pour ne pas reconstruire à
+        chaque itération, et le vivier est renouvelé tous les
+        ``launch_pool_refresh`` tirages pour que les mêmes lancers ne
+        reviennent pas indéfiniment.
+        """
+
+        step = max(float(self.cfg.launch_pool_curriculum_step), 1.0e-6)
+        bucket = round(float(spin_curriculum_scale) / step)
+        fresh = (
+            self._launch_pool is None
+            or self._launch_pool_bucket != bucket
+            or self._launch_pool_draws >= int(self.cfg.launch_pool_refresh)
+        )
+        if not fresh:
+            return
+
+        target = min(
+            int(self.cfg.launch_pool_size), max(4096, 64 * self.num_envs)
+        )
+        scale = bucket * step
+        parts = []
+        collected = 0
+        # Le taux d'acceptation mesuré va de 78 % (curriculum 0.25) à 50 %
+        # (curriculum plein) : deux passes suffisent presque toujours.
+        for _ in range(8):
+            qpos, qvel, spin = self._sample_valid_launches(
+                max(2048, int(2.5 * (target - collected))), scale
+            )
+            if qpos.shape[0] == 0:
+                continue
+            parts.append((qpos, qvel, spin))
+            collected += qpos.shape[0]
+            if collected >= target:
+                break
+        if collected == 0:
+            raise RuntimeError(
+                "Aucun lancer jouable : vérifier les plages de tirage de la balle "
+                f"et le niveau de curriculum ({scale:.2f})"
+            )
+        self._launch_pool = tuple(
+            torch.cat([part[i] for part in parts])[:target] for i in range(3)
+        )
+        self._launch_pool_bucket = bucket
+        self._launch_pool_draws = 0
+
+    def _draw_launches(self, n: int, spin_curriculum_scale: float):
+        """Sert ``n`` conditions de lancer jouables, sans rejet ni synchronisation."""
+
+        self._ensure_launch_pool(spin_curriculum_scale)
+        pool_qpos, pool_qvel, pool_spin = self._launch_pool
+        idx = torch.randint(0, pool_qpos.shape[0], (n,), device=self.device)
+        self._launch_pool_draws += n
+        return pool_qpos[idx].clone(), pool_qvel[idx].clone(), pool_spin[idx].clone()
+
     def _reset_idx(self, env_ids: torch.Tensor) -> None:
         """Reset environment, resample the domain randomization parameters"""
         
@@ -1610,95 +1750,12 @@ class TableTennisWarpEnv(VecEnv):
         # self.model.body_mass[env_ids, self.paddle_bid] = 0.1318480843660727
         # self.model.geom_friction[env_ids, self.ball_gid] = torch.tensor([9.5396e-01, 4.0819e-03, 1.0331e-05]).to(self.device)
 
-        # randomization on ball position, calculate every reset
-        init_ball_qpos = torch.zeros(n_reset_envs, 3, device=self.device)
-        init_ball_qvel = torch.zeros(n_reset_envs, 3, device=self.device)
-        init_ball_spin = torch.zeros(n_reset_envs, 3, device=self.device)
-
-        # Resample until the spin-aware trajectory clears the net and reaches the hit zone.
-        cross_net_flag = torch.zeros(n_reset_envs, device=self.device, dtype=torch.bool)
-        sampling_attempt = 0
-        while not cross_net_flag.all().item():
-            n_envs_remain = (~cross_net_flag).sum().item()
-            # Oversampling prevents the last hard-to-fill environment from
-            # causing dozens of tiny GPU launches and host synchronizations.
-            n_candidates = max(4 * n_envs_remain, 64)
-            init_ball_qpos_remain, init_ball_qvel_remain = self._rand_ball_pos_and_vel(
-                n_candidates
-            )
-            if self.cfg.spin_physics_enabled:
-                if self.cfg.incoming_spin_enabled:
-                    incoming_spin_command = (
-                        torch.rand((n_candidates, 3), device=self.device)
-                        * (self.incoming_spin_high - self.incoming_spin_low)
-                        + self.incoming_spin_low
-                    ) * spin_curriculum_scale
-                else:
-                    incoming_spin_command = torch.zeros(
-                        n_candidates, 3, device=self.device
-                    )
-                init_ball_spin_remain = trajectory_spin_to_world(incoming_spin_command, init_ball_qvel_remain)
-                _, net_pos, _, _, crossed_net = propagate_to_x(
-                    init_ball_qpos_remain,
-                    init_ball_qvel_remain,
-                    init_ball_spin_remain,
-                    0.0,
-                    max_time=1.0,
-                    params=self.ball_physics,
-                    root_iterations=self.cfg.spin_planner_root_iterations,
-                    integration_substeps=self.cfg.spin_planner_integration_substeps,
-                )
-                cross_net_flag_remain = crossed_net & (net_pos[:, 2] > MIN_SERVE_NET_HEIGHT)
-                incoming = predict_incoming_hit(
-                    init_ball_qpos_remain,
-                    init_ball_qvel_remain,
-                    init_ball_spin_remain,
-                    event_root_iterations=self.cfg.spin_planner_root_iterations,
-                    event_integration_substeps=self.cfg.spin_planner_integration_substeps,
-                    physics=self.ball_physics,
-                )
-                hit_pos = incoming.position
-                cross_net_flag_remain &= incoming.valid
-            else:
-                init_ball_spin_remain = torch.zeros_like(init_ball_qvel_remain)
-                cross_net_flag_remain = self._check_ball_cross_net(init_ball_qpos_remain, init_ball_qvel_remain)
-                t_land, land_pos, land_vel = compute_land(init_ball_qpos_remain, init_ball_qvel_remain)
-                bounce_vel = land_vel.clone()
-                bounce_vel[:, 2] = -bounce_vel[:, 2]
-                hit_pos, _, _ = compute_hit_pos(t_land, land_pos, bounce_vel)
-
-            target_in_range = (
-                (hit_pos[:, 1] > self.hit_xyz_low[1])
-                & (hit_pos[:, 1] < self.hit_xyz_high[1])
-                & (hit_pos[:, 2] > self.hit_xyz_low[2])
-                & (hit_pos[:, 2] < self.hit_xyz_high[2])
-            )
-            
-            cross_net_flag_remain = cross_net_flag_remain & target_in_range
-
-
-            n_success = min(cross_net_flag_remain.sum().item(), n_envs_remain)
-
-            fail_indices = torch.where(~cross_net_flag)[0]
-            successful_candidates = torch.where(cross_net_flag_remain)[0][:n_success]
-            init_ball_qpos[fail_indices[:n_success]] = init_ball_qpos_remain[
-                successful_candidates
-            ]
-            init_ball_qvel[fail_indices[:n_success]] = init_ball_qvel_remain[
-                successful_candidates
-            ]
-            init_ball_spin[fail_indices[:n_success]] = init_ball_spin_remain[
-                successful_candidates
-            ]
-            cross_net_flag[fail_indices[:n_success]] = True
-            sampling_attempt += 1
-            if sampling_attempt >= 20 and not cross_net_flag.all().item():
-                raise RuntimeError("Could not sample valid incoming spin trajectories")
-
-        # local_env_ids = torch.arange(n_reset_envs, device=self.device)
-        # init_ball_qpos[local_env_ids] = torch.tensor([-0.9634, -0.2302, 1.4041]).to(self.device)
-        # init_ball_qvel[local_env_ids] = torch.tensor([6.2354, 2.3637, -0.0967]).to(self.device)
-        # self.model.body_pos[env_ids, self.ball_bid] = init_ball_qpos
+        # Conditions de lancer tirées du vivier plutôt que rejetées en boucle.
+        # Voir `_draw_launches` : le rejet ne dépend pas de la politique, il
+        # sort donc du chemin chaud.
+        init_ball_qpos, init_ball_qvel, init_ball_spin = self._draw_launches(
+            n_reset_envs, spin_curriculum_scale
+        )
 
         self.data.time[env_ids] = 0.0
         self.data.qpos[env_ids] = self.init_qpos
@@ -1715,7 +1772,67 @@ class TableTennisWarpEnv(VecEnv):
         self.data.act[env_ids] = 0.0
         self.sim.forward()
 
-        # get high command
+        # Commandes tirées en K exemplaires évalués d'UN SEUL coup, au lieu de
+        # relancer le planificateur jusqu'à huit fois en série.
+        #
+        # « Plan infaisable » ne veut pas dire NaN : il veut dire que le coup
+        # demandé exigerait une raquette au-delà de ses limites (12 m/s,
+        # 30 rad/s). Le rejet d'origine avait donc un sens — il restreint les
+        # commandes à ce qui est physiquement atteignable — mais il le faisait
+        # en silence, et la distribution des effets demandés s'en trouvait
+        # biaisée sans que rien ne le dise. Retenir le PREMIER candidat
+        # faisable parmi K tirages indépendants est exactement le même
+        # échantillonnage par rejet, donc la même distribution ; ce qui change,
+        # c'est qu'il n'y a plus qu'un appel, et que l'ampleur du filtrage est
+        # désormais mesurée (`diag/plan_resamples`, `diag/infeasible_plans`).
+        candidates = max(1, int(self.cfg.plan_candidates))
+        if not (self.cfg.spin_physics_enabled and self.cfg.spin_planner_enabled):
+            candidates = 1
+
+        # Candidat 0 = la commande déjà tirée, pour que le mode `fixed` et le
+        # tirage initial restent honorés quand ils sont faisables.
+        spin_candidates = self.target_spin[env_ids].unsqueeze(1).repeat(1, candidates, 1)
+        landing_candidates = (
+            self.target_landing_pos[env_ids].unsqueeze(1).repeat(1, candidates, 1)
+        )
+        if candidates > 1:
+            extra = (n_reset_envs, candidates - 1, 3)
+            landing_candidates[:, 1:] = (
+                torch.rand(extra, device=self.device)
+                * (self.opponent_table_upper - self.opponent_table_lower)
+                + self.opponent_table_lower
+            )
+            if self.cfg.spin_command_mode == "uniform":
+                spin_candidates[:, 1:] = (
+                    torch.rand(extra, device=self.device)
+                    * (self.spin_target_high - self.spin_target_low)
+                    + self.spin_target_low
+                ) * spin_curriculum_scale
+
+        def repeat_per_candidate(tensor):
+            """Duplique l'état de balle pour chacun des K candidats."""
+            width = tensor.shape[-1]
+            return tensor.unsqueeze(1).expand(-1, candidates, width).reshape(-1, width)
+
+        command = self.get_high_command(
+            repeat_per_candidate(init_ball_qpos),
+            repeat_per_candidate(init_ball_qvel),
+            repeat_per_candidate(init_ball_spin),
+            spin_command=spin_candidates.reshape(-1, 3),
+            target_landing=landing_candidates.reshape(-1, 3),
+            return_valid=True,
+        )
+        valid = command[-1].view(n_reset_envs, candidates)
+        # `argmax` sur un booléen renvoie le premier True — et 0 si aucun, ce
+        # qui donne le repli voulu : on garde le premier tirage et on le marque
+        # infaisable plutôt que de faire échouer le run.
+        choice = torch.argmax(valid.int(), dim=1)
+        plan_valid = valid.any(dim=1)
+        rows = torch.arange(n_reset_envs, device=self.device)
+
+        def pick(tensor):
+            return tensor.view(n_reset_envs, candidates, -1)[rows, choice].squeeze(-1)
+
         (
             paddle_pos,
             paddle_vel,
@@ -1726,61 +1843,13 @@ class TableTennisWarpEnv(VecEnv):
             target_spin_world,
             contact_vel,
             contact_offset_local,
-            plan_valid,
-        ) = self.get_high_command(
-            init_ball_qpos,
-            init_ball_qvel,
-            init_ball_spin,
-            spin_command=self.target_spin[env_ids],
-            target_landing=self.target_landing_pos[env_ids],
-            return_valid=True,
-        )
+        ) = (pick(t) for t in command[:-1])
 
-        if self.cfg.spin_physics_enabled and self.cfg.spin_planner_enabled:
-            planning_attempt = 0
-            while not plan_valid.all().item() and planning_attempt < 8:
-                retry = ~plan_valid
-                retry_count = retry.sum().item()
-                self.target_landing_pos[env_ids[retry]] = (
-                    torch.rand((retry_count, 3), device=self.device)
-                    * (self.opponent_table_upper - self.opponent_table_lower)
-                    + self.opponent_table_lower
-                )
-                if self.cfg.spin_command_mode == "uniform":
-                    self.target_spin[env_ids[retry]] = (
-                        torch.rand((retry_count, 3), device=self.device)
-                        * (self.spin_target_high - self.spin_target_low)
-                        + self.spin_target_low
-                    ) * spin_curriculum_scale
-                retry_command = self.get_high_command(
-                    init_ball_qpos[retry],
-                    init_ball_qvel[retry],
-                    init_ball_spin[retry],
-                    spin_command=self.target_spin[env_ids[retry]],
-                    target_landing=self.target_landing_pos[env_ids[retry]],
-                    return_valid=True,
-                )
-                retry_tensors = retry_command[:-1]
-                for destination, source in zip(
-                    (
-                        paddle_pos,
-                        paddle_vel,
-                        paddle_angvel,
-                        paddle_ori,
-                        hit_time,
-                        hit_pos,
-                        target_spin_world,
-                        contact_vel,
-                        contact_offset_local,
-                    ),
-                    retry_tensors,
-                    strict=True,
-                ):
-                    destination[retry] = source
-                plan_valid[retry] = retry_command[-1]
-                planning_attempt += 1
-            if not plan_valid.all().item():
-                raise RuntimeError("Could not sample feasible spin return plans")
+        # La commande effectivement retenue devient la commande de l'épisode.
+        self.target_spin[env_ids] = spin_candidates[rows, choice]
+        self.target_landing_pos[env_ids] = landing_candidates[rows, choice]
+        self.plan_resamples[env_ids] = choice.float()
+        self.plan_infeasible[env_ids] = (~plan_valid).float()
 
         self.target_pos[env_ids] = paddle_pos
         self.target_vel[env_ids] = paddle_vel
@@ -2102,6 +2171,8 @@ class TableTennisWarpEnv(VecEnv):
         # ordinaire : une courbe qui décolle date l'incident à l'itération près.
         extras["log"]["diag/nonfinite_reward_envs"] = self.nonfinite_reward_envs.float()
         extras["log"]["diag/nonfinite_obs_envs"] = self.nonfinite_obs_envs.float()
+        extras["log"]["diag/plan_resamples"] = self.plan_resamples
+        extras["log"]["diag/infeasible_plans"] = self.plan_infeasible
 
         return obs, reward, done, extras
 
