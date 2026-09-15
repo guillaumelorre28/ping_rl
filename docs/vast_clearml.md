@@ -159,12 +159,30 @@ parfaitement correct, mais émis en opérations élémentaires minuscules :
 Newton x 3 sous-pas x 4 étages RK, chaque étage réévaluant un modèle
 aérodynamique à interpolation par table.
 
-`compile_flight` fusionne ce noyau avec `torch.compile` : **-91 % d'opérations
-élémentaires**, résultats identiques au bruit float32 près (écart maximal
-5e-7, verrouillé par `tests/test_compiled_flight.py`). `dynamic=True` produit un
-seul graphe pour toutes les tailles de lot — indispensable, le nombre
-d'environnements resetés changeant à chaque pas. Les premiers pas paient la
-compilation (une dizaine de secondes) puis elle est amortie.
+`compile_flight` fusionne ce noyau avec `torch.compile`. Sur un appel complet
+au planificateur :
+
+| | opérations | temps |
+|---|---|---|
+| direct | 140 397 | 57,9 ms |
+| pas RK4 compilé | 15 405 | 11,8 ms |
+| **propagations compilées** | **8 201** | **6,8 ms** |
+
+Ce sont les propagations entières qui sont compilées, pas seulement le pas
+RK4 : la boucle de Newton et les sous-pas s'y retrouvent dans un même graphe.
+
+Les écarts numériques sont ceux du float32. La boucle de Newton les amplifie —
+la propagation seule dévie de 1e-7, la commande de raquette de 1e-4 en absolu —
+mais rapporté aux échelles (6,9 m/s, 28 rad/s, 338 rad/s) cela fait au plus
+**1,2e-5 en relatif**, sept ordres de grandeur sous la randomisation de domaine
+(±10 %). Le drapeau de faisabilité, lui, est exigé identique.
+`tests/test_compiled_flight.py` verrouille les deux.
+
+`dynamic=True` produit un seul graphe pour toutes les tailles de lot —
+indispensable, le nombre d'environnements resetés changeant à chaque pas. La
+compilation coûte environ **150 secondes au premier run** (une trentaine de
+graphes) : négligeable sur 3000 itérations, visible sur un run court. Elle
+retombe seule sur l'exécution directe si elle échoue.
 
     ./scripts/vast.sh profile <offer_id> --auto-destroy --compare-compiled
 

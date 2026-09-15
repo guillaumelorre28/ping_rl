@@ -194,9 +194,12 @@ def main() -> int:
 
         print("\nActivation de la compilation du pas de vol…", flush=True)
         if ball_physics.enable_compiled_flight(True):
-            # Les premiers pas paient la compilation (mesuré : ~17 graphes,
-            # stabilisé en une dizaine de pas). On ne mesure qu'après.
-            rollout(30)
+            # Les premiers pas paient la compilation. Mesuré en local :
+            # ~32 graphes, les vingt premiers pas à 5-10 s, stabilisé ensuite.
+            # On chauffe largement au-delà avant de mesurer quoi que ce soit —
+            # mesurer pendant la compilation donnerait un résultat absurde et
+            # défavorable.
+            rollout(60)
             text, wall_compiled = measure("désynchronisé + compilé")
             lines.append(text)
             print(text, flush=True)
